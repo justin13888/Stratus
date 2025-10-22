@@ -2,7 +2,8 @@ use axum::{Router, routing::get};
 use eyre::{Result, eyre};
 use listenfd::ListenFd;
 use tokio::net::TcpListener;
-use tracing::info;
+use tower::ServiceBuilder;
+use tower_http::{compression::CompressionLayer, decompression::RequestDecompressionLayer};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -32,7 +33,7 @@ async fn main() -> Result<()> {
     // Ensure configured directories exist
     // TODO
 
-    let app = Router::new().route("/", get(handler));
+    let app = app();
 
     let mut listenfd = ListenFd::from_env();
     let listener = match listenfd.take_tcp_listener(0).unwrap() {
@@ -54,7 +55,105 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn app() -> Router {
+    Router::new().route("/", get(handler)).layer(
+        ServiceBuilder::new()
+            .layer(RequestDecompressionLayer::new())
+            .layer(CompressionLayer::new()),
+    )
+}
+
 use axum::response::Html;
-async fn handler() -> Html<&'static str> {
-    Html("<h1>Hello, World!</h1>")
+async fn handler() -> Html<String> {
+    // Make the response larger to trigger compression (tower-http has a minimum size threshold)
+    Html("<h1>Hello, World!</h1>".repeat(100))
+} // TODO: Remove this
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use flate2::read::GzDecoder;
+    use http::{StatusCode, header};
+    use std::io::Read;
+    use tower::ServiceExt;
+
+    use super::*;
+
+    // TODO: Add tests for downloading file with compression
+    #[tokio::test]
+    async fn fetch_index_gzip() {
+        // Given
+        let request = http::Request::get("/")
+            .header(header::ACCEPT_ENCODING, "gzip")
+            .body(Body::empty())
+            .unwrap();
+
+        // When
+
+        let response = app().oneshot(request).await.unwrap();
+
+        // Then
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Check if the response is compressed
+        let content_encoding = response.headers().get(header::CONTENT_ENCODING);
+        assert!(
+            content_encoding.is_some(),
+            "Content-Encoding header should be present"
+        );
+        assert_eq!(
+            content_encoding.unwrap(),
+            "gzip",
+            "Content-Encoding should be gzip"
+        );
+
+        let response_body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let mut decoder = GzDecoder::new(response_body.as_ref());
+        let mut decompress_body = String::new();
+        decoder.read_to_string(&mut decompress_body).unwrap();
+
+        // Verify the decompressed body matches what the handler returns
+        assert!(decompress_body.contains("<h1>Hello, World!</h1>"));
+        assert!(decompress_body.len() > 100, "Should have repeated content");
+    }
+
+    #[tokio::test]
+    async fn fetch_index_zstd() {
+        // Given
+        let request = http::Request::get("/")
+            .header(header::ACCEPT_ENCODING, "zstd")
+            .body(Body::empty())
+            .unwrap();
+
+        // When
+        let response = app().oneshot(request).await.unwrap();
+
+        // Then
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Check if the response is compressed
+        let content_encoding = response.headers().get(header::CONTENT_ENCODING);
+        assert!(
+            content_encoding.is_some(),
+            "Content-Encoding header should be present"
+        );
+        assert_eq!(
+            content_encoding.unwrap(),
+            "zstd",
+            "Content-Encoding should be zstd"
+        );
+
+        let response_body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let decompressed = zstd::decode_all(response_body.as_ref()).unwrap();
+        let decompress_body = String::from_utf8(decompressed).unwrap();
+
+        // Verify the decompressed body matches what the handler returns
+        assert!(decompress_body.contains("<h1>Hello, World!</h1>"));
+        assert!(decompress_body.len() > 100, "Should have repeated content");
+    }
 }
