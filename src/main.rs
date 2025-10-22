@@ -3,7 +3,9 @@ use eyre::{Result, eyre};
 use listenfd::ListenFd;
 use tokio::net::TcpListener;
 use tower::ServiceBuilder;
-use tower_http::{compression::CompressionLayer, decompression::RequestDecompressionLayer};
+use tower_http::{
+    compression::CompressionLayer, cors::CorsLayer, decompression::RequestDecompressionLayer,
+};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -56,11 +58,14 @@ async fn main() -> Result<()> {
 }
 
 fn app() -> Router {
-    Router::new().route("/", get(handler)).layer(
-        ServiceBuilder::new()
-            .layer(RequestDecompressionLayer::new())
-            .layer(CompressionLayer::new()),
-    )
+    Router::new()
+        .route("/", get(handler))
+        .layer(
+            ServiceBuilder::new()
+                .layer(RequestDecompressionLayer::new())
+                .layer(CompressionLayer::new()),
+        )
+        .layer(CorsLayer::permissive())
 }
 
 use axum::response::Html;

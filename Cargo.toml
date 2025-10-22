@@ -11,10 +11,7 @@ eyre = "0.6.12"
 listenfd = "1.0.2"
 tokio = { version = "1.48.0", features = ["full"] }
 tower = { version = "0.5.2", features = ["full"] }
-tower-http = { version = "0.6.6", features = [
-    "compression-full",
-    "decompression-full",
-] }
+tower-http = { version = "0.6.6", features = ["compression-full", "cors", "decompression-full"] }
 tracing = { version = "0.1.41", features = ["release_max_level_debug", "log"] }
 tracing-subscriber = { version = "0.3.20", features = [
     "chrono",
