@@ -1,11 +1,15 @@
+use std::{net::SocketAddr, path::PathBuf};
+
 use axum::{Router, routing::get};
+use axum_server::tls_rustls::RustlsConfig;
 use eyre::{Result, eyre};
 use listenfd::ListenFd;
-use tokio::net::TcpListener;
+use std::net::TcpListener;
 use tower::ServiceBuilder;
 use tower_http::{
     compression::CompressionLayer, cors::CorsLayer, decompression::RequestDecompressionLayer,
 };
+use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -35,6 +39,14 @@ async fn main() -> Result<()> {
     // Ensure configured directories exist
     // TODO
 
+    // Load TLS certificates
+    let tls_config = RustlsConfig::from_pem_file(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cert.pem"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("key.pem"),
+    )
+    .await
+    .expect("Failed to load TLS certificates"); // TODO: Load from config
+
     let app = app();
 
     let mut listenfd = ListenFd::from_env();
@@ -42,15 +54,16 @@ async fn main() -> Result<()> {
         // if we are given a tcp listener on listen fd 0, we use that one
         Some(listener) => {
             listener.set_nonblocking(true).unwrap();
-            TcpListener::from_std(listener).unwrap()
+            listener
         }
         // otherwise fall back to local listening
-        None => TcpListener::bind("127.0.0.1:3000").await.unwrap(),
+        None => TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 3000))).unwrap(), // TODO: Load from config
     };
 
-    println!("Listening on {}", listener.local_addr().unwrap());
+    info!("Listening on {}", listener.local_addr().unwrap());
 
-    axum::serve(listener, app)
+    axum_server::from_tcp_rustls(listener, tls_config)
+        .serve(app.into_make_service())
         .await
         .map_err(|e| eyre!("Server error: {}", e))?;
 

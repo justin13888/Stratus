@@ -27,5 +27,6 @@ Prerequisites:
 
 ### Start Development Server
 
-1. `cargo install cargo-watch systemfd`
-2. `systemfd --no-pid -s http::3000 -- cargo watch -x run`
+1. Install some dependencies: `cargo install cargo-watch systemfd`
+2. Generate self-signed TLS certificates: `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=localhost"`
+3. Start development server: `systemfd --no-pid -s http::3000 -- cargo watch -x run`

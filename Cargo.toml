@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 axum = { version = "0.8.6", features = ["http2"] }
+axum-server = { version = "0.7.2", features = ["rustls", "tls-rustls"] }
 color-eyre = "0.6.5"
 dotenvy = "0.15.7"
 eyre = "0.6.12"
