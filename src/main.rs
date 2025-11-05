@@ -125,9 +125,8 @@ async fn main() -> Result<()> {
     // Determine working directory
     let workdir = server_settings
         .workdir
-        .as_ref()
-        .map(|p| p.as_path())
-        .unwrap_or_else(|| std::path::Path::new("."));
+        .as_deref()
+        .unwrap_or_else(|| Path::new("."));
 
     // Create working directory if it doesn't exist
     std::fs::create_dir_all(workdir)
@@ -139,9 +138,6 @@ async fn main() -> Result<()> {
     let rustls_config = RustlsConfig::from_pem_file(&tls_config.cert_file, &tls_config.key_file)
         .await
         .map_err(|e| eyre!("Failed to load TLS certificates: {}", e))?;
-
-    // HTTP/2 settings are not configurable via axum-server
-    // The library uses sensible defaults for HTTP/2 configuration
 
     // Build the application with configured middleware
     let app = build_app(&security_config, &network_config, &shares, workdir)?;
@@ -257,7 +253,6 @@ fn build_app(
 
     // Create base router with health and index endpoints
     let mut app = Router::new()
-        .route("/", get(handler))
         .route("/health", get(health_handler))
         .merge(share_router);
 
@@ -332,13 +327,6 @@ fn build_app(
     Ok(app)
 }
 
-use axum::response::Html;
-
-async fn handler() -> Html<String> {
-    // Make the response larger to trigger compression (tower-http has a minimum size threshold)
-    Html("<h1>Hello, World!</h1>".repeat(100))
-} // TODO: Remove this
-
 async fn health_handler() -> StatusCode {
     StatusCode::OK // TODO: Check actual health status
 }
@@ -346,9 +334,7 @@ async fn health_handler() -> StatusCode {
 #[cfg(test)]
 mod tests {
     use axum::body::Body;
-    use flate2::read::GzDecoder;
-    use http::{StatusCode, header};
-    use std::io::Read;
+    use http::StatusCode;
     use tower::ServiceExt;
 
     use super::*;
@@ -356,7 +342,6 @@ mod tests {
     // Helper to create a test app
     fn test_app() -> Router {
         Router::new()
-            .route("/", get(handler))
             .route("/health", get(health_handler))
             .layer(RequestDecompressionLayer::new())
             .layer(CompressionLayer::new())
@@ -370,84 +355,6 @@ mod tests {
         let response = test_app().oneshot(request).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    // TODO: Add tests for downloading file with compression
-    #[tokio::test]
-    async fn fetch_index_gzip() {
-        // Given
-        let request = http::Request::get("/")
-            .header(header::ACCEPT_ENCODING, "gzip")
-            .body(Body::empty())
-            .unwrap();
-
-        // When
-
-        let response = test_app().oneshot(request).await.unwrap();
-
-        // Then
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        // Check if the response is compressed
-        let content_encoding = response.headers().get(header::CONTENT_ENCODING);
-        assert!(
-            content_encoding.is_some(),
-            "Content-Encoding header should be present"
-        );
-        assert_eq!(
-            content_encoding.unwrap(),
-            "gzip",
-            "Content-Encoding should be gzip"
-        );
-
-        let response_body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let mut decoder = GzDecoder::new(response_body.as_ref());
-        let mut decompress_body = String::new();
-        decoder.read_to_string(&mut decompress_body).unwrap();
-
-        // Verify the decompressed body matches what the handler returns
-        assert!(decompress_body.contains("<h1>Hello, World!</h1>"));
-        assert!(decompress_body.len() > 100, "Should have repeated content");
-    }
-
-    #[tokio::test]
-    async fn fetch_index_zstd() {
-        // Given
-        let request = http::Request::get("/")
-            .header(header::ACCEPT_ENCODING, "zstd")
-            .body(Body::empty())
-            .unwrap();
-
-        // When
-        let response = test_app().oneshot(request).await.unwrap();
-
-        // Then
-        assert_eq!(response.status(), StatusCode::OK);
-
-        // Check if the response is compressed
-        let content_encoding = response.headers().get(header::CONTENT_ENCODING);
-        assert!(
-            content_encoding.is_some(),
-            "Content-Encoding header should be present"
-        );
-        assert_eq!(
-            content_encoding.unwrap(),
-            "zstd",
-            "Content-Encoding should be zstd"
-        );
-
-        let response_body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let decompressed = zstd::decode_all(response_body.as_ref()).unwrap();
-        let decompress_body = String::from_utf8(decompressed).unwrap();
-
-        // Verify the decompressed body matches what the handler returns
-        assert!(decompress_body.contains("<h1>Hello, World!</h1>"));
-        assert!(decompress_body.len() > 100, "Should have repeated content");
     }
 }
 // TODO: Add unit testing for all config implementations
