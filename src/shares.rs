@@ -246,12 +246,12 @@ fn generate_directory_html(
 
     let parent_link = if !relative_path.is_empty() {
         let parent_path = if relative_path.contains('/') {
-            relative_path.rsplitn(2, '/').nth(1).unwrap_or("")
+            relative_path.rsplit_once('/').map(|x| x.0).unwrap_or("")
         } else {
             ""
         };
         format!(
-            r#"<tr><td><a href="/shares/{}/{}">📁 ..</a></td><td>-</td><td>-</td></tr>"#,
+            r#"<tr><td><a href="/shares/{}/{}">📁 ..</a></td><td>-</td><td>-</td><td></td></tr>"#,
             share_name, parent_path
         )
     } else {
@@ -282,15 +282,27 @@ fn generate_directory_html(
             format!("{}/", relative_path)
         };
 
+        let download_button = if entry.is_dir {
+            String::new()
+        } else {
+            format!(
+                r#"<a href="/shares/{}/{}{}" download class="download-btn">⬇️</a>"#,
+                share_name,
+                path_prefix,
+                urlencoding::encode(&entry.name)
+            )
+        };
+
         rows.push_str(&format!(
-            r#"<tr><td><a href="/shares/{}/{}{}">{} {}</a></td><td>{}</td><td>{}</td></tr>"#,
+            r#"<tr><td><a href="/shares/{}/{}{}">{} {}</a></td><td>{}</td><td>{}</td><td>{}</td></tr>"#,
             share_name,
             path_prefix,
             urlencoding::encode(&entry.name),
             icon,
             html_escape::encode_text(&entry.name),
             size,
-            modified
+            modified,
+            download_button
         ));
     }
 
@@ -349,6 +361,19 @@ fn generate_directory_html(
         a:hover {{
             text-decoration: underline;
         }}
+        .download-btn {{
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            font-size: 1rem;
+            transition: background 0.2s;
+        }}
+        .download-btn:hover {{
+            background: #30363d;
+            text-decoration: none;
+        }}
         .footer {{
             padding: 1rem 2rem;
             text-align: center;
@@ -367,6 +392,7 @@ fn generate_directory_html(
                     <th>Name</th>
                     <th>Size</th>
                     <th>Modified</th>
+                    <th>Download</th>
                 </tr>
             </thead>
             <tbody>
@@ -434,14 +460,14 @@ async fn serve_file(file_path: &PathBuf, _share_config: &ShareConfig) -> Respons
         .and_then(|n| n.to_str())
         .unwrap_or("download");
 
+    // Use attachment disposition to force download when appropriate
+    let disposition = format!(r#"inline; filename="{}""#, filename);
+
     (
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, content_type),
-            (
-                header::CONTENT_DISPOSITION,
-                format!(r#"inline; filename="{}""#, filename),
-            ),
+            (header::CONTENT_DISPOSITION, disposition),
         ],
         contents,
     )
