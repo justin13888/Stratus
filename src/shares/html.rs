@@ -1,5 +1,6 @@
 use super::directory::DirEntry;
 use super::utils::{format_size, format_timestamp};
+use std::fmt::Write;
 
 pub fn generate_directory_html(
     share_name: &str,
@@ -26,7 +27,7 @@ pub fn generate_directory_html(
         String::new()
     };
 
-    let mut rows = String::new();
+    let mut rows = String::with_capacity(entries.len() * 256); // Pre-allocate for rows
     for entry in entries {
         let icon = if entry.is_dir { "📁" } else { "📄" };
         let size = if entry.is_dir {
@@ -61,7 +62,9 @@ pub fn generate_directory_html(
             )
         };
 
-        rows.push_str(&format!(
+        // Use write! for better performance
+        write!(
+            &mut rows,
             r#"<tr><td><a href="/shares/{}/{}{}">{} {}</a></td><td>{}</td><td>{}</td><td>{}</td></tr>"#,
             share_name,
             path_prefix,
@@ -71,7 +74,7 @@ pub fn generate_directory_html(
             size,
             modified,
             download_button
-        ));
+        ).unwrap();
     }
 
     format!(

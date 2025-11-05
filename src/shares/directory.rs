@@ -37,10 +37,19 @@ pub async fn serve_directory_listing(
         cache_key.replace('/', "_").replace("..", "_")
     ));
 
-    // Check if we have a cached version
-    // For now, we'll regenerate each time for simplicity
-    // TODO: Implement proper cache invalidation based on directory mtime
+    // Check cache with mtime validation
+    if let (Ok(cache_metadata), Ok(dir_metadata)) = (
+        fs::metadata(&cache_file).await,
+        fs::metadata(dir_path).await,
+    ) && let (Ok(cache_mtime), Ok(dir_mtime)) =
+        (cache_metadata.modified(), dir_metadata.modified())
+        && cache_mtime > dir_mtime // Cache is valid if newer than directory
+        && let Ok(cached_html) = fs::read_to_string(&cache_file).await
+    {
+        return Html(cached_html).into_response();
+    }
 
+    // Generate fresh listing
     let entries = match read_directory_entries(dir_path, share_config).await {
         Ok(e) => e,
         Err(e) => {
@@ -55,10 +64,14 @@ pub async fn serve_directory_listing(
 
     let html = generate_directory_html(share_name, relative_path, entries);
 
-    // Cache the HTML
-    if let Err(e) = fs::write(&cache_file, &html).await {
-        warn!("Failed to cache directory listing: {}", e);
-    }
+    // Cache asynchronously in background
+    let cache_file_clone = cache_file.clone();
+    let html_clone = html.clone();
+    tokio::spawn(async move {
+        if let Err(e) = fs::write(&cache_file_clone, &html_clone).await {
+            warn!("Failed to cache directory listing: {}", e);
+        }
+    });
 
     Html(html).into_response()
 }
@@ -67,8 +80,21 @@ async fn read_directory_entries(
     dir_path: &PathBuf,
     share_config: &ShareConfig,
 ) -> Result<Vec<DirEntry>> {
-    let mut entries = Vec::new();
+    let mut entries = Vec::with_capacity(256); // Pre-allocate for better performance
     let mut read_dir = fs::read_dir(dir_path).await?;
+
+    // Compile glob patterns once (outside the loop)
+    let exclude_patterns: Vec<_> = share_config
+        .exclude_patterns
+        .iter()
+        .filter_map(|pattern| glob::Pattern::new(pattern).ok())
+        .collect();
+
+    let include_patterns: Vec<_> = share_config
+        .include_patterns
+        .iter()
+        .filter_map(|pattern| glob::Pattern::new(pattern).ok())
+        .collect();
 
     while let Some(entry) = read_dir.next_entry().await? {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -79,27 +105,13 @@ async fn read_directory_entries(
         }
 
         // Check exclude patterns
-        if !share_config.exclude_patterns.is_empty() {
-            let should_exclude = share_config.exclude_patterns.iter().any(|pattern| {
-                glob::Pattern::new(pattern)
-                    .map(|p| p.matches(&name))
-                    .unwrap_or(false)
-            });
-            if should_exclude {
-                continue;
-            }
+        if !exclude_patterns.is_empty() && exclude_patterns.iter().any(|p| p.matches(&name)) {
+            continue;
         }
 
         // Check include patterns (if specified)
-        if !share_config.include_patterns.is_empty() {
-            let should_include = share_config.include_patterns.iter().any(|pattern| {
-                glob::Pattern::new(pattern)
-                    .map(|p| p.matches(&name))
-                    .unwrap_or(false)
-            });
-            if !should_include {
-                continue;
-            }
+        if !include_patterns.is_empty() && !include_patterns.iter().any(|p| p.matches(&name)) {
+            continue;
         }
 
         let metadata = entry.metadata().await?;
@@ -118,8 +130,8 @@ async fn read_directory_entries(
         });
     }
 
-    // Sort: directories first, then by name
-    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+    // Sort: directories first, then by name (using unstable_sort for better performance)
+    entries.sort_unstable_by(|a, b| match (a.is_dir, b.is_dir) {
         (true, false) => std::cmp::Ordering::Less,
         (false, true) => std::cmp::Ordering::Greater,
         _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),

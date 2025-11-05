@@ -16,6 +16,7 @@ use tower::ServiceBuilder;
 use tower::timeout::TimeoutLayer;
 use tower_http::{
     compression::CompressionLayer, cors::CorsLayer, decompression::RequestDecompressionLayer,
+    limit::RequestBodyLimitLayer,
 };
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
@@ -285,12 +286,25 @@ fn build_app(
     // Build middleware stack conditionally
     app = app.layer(RequestDecompressionLayer::new());
 
-    // Add compression if enabled
+    // Add request body size limiting
+    let max_body_size = network_config.max_request_size * 1024 * 1024; // Convert MB to bytes
+    app = app.layer(RequestBodyLimitLayer::new(max_body_size));
+    info!(
+        "Request body size limit: {} MB",
+        network_config.max_request_size
+    );
+
+    // Add compression if enabled with smart predicates
     if security_config.compression_enabled {
-        // TODO: Configure compression algorithms based on security_config.compression_algorithms
-        // TODO: Configure compression_min_size
-        // Currently tower-http doesn't expose min_size configuration easily
-        app = app.layer(CompressionLayer::new());
+        use tower_http::compression::predicate::SizeAbove;
+        // Only compress responses larger than the configured minimum size
+        let min_size = (security_config.compression_min_size * 1024) as u16; // Convert KB to bytes
+        let predicate = SizeAbove::new(min_size);
+        app = app.layer(CompressionLayer::new().compress_when(predicate));
+        info!(
+            "Compression enabled with min size: {} KB",
+            security_config.compression_min_size
+        );
     }
 
     // Add request timeout with error handling
@@ -303,9 +317,6 @@ fn build_app(
             .layer(TimeoutLayer::new(request_timeout)),
     );
     info!("Request timeout: {}s", network_config.request_timeout);
-
-    // TODO: Implement request body size limiting based on network_config.max_request_size
-    // Requires custom middleware or tower-http "limit" feature
 
     // Configure CORS if enabled
     if security_config.cors_enabled {
@@ -326,6 +337,7 @@ fn build_app(
 
     Ok(app)
 }
+// TODO: Add unit tests to verify share endpoints expose compression headers &&
 
 async fn health_handler() -> StatusCode {
     StatusCode::OK // TODO: Check actual health status
