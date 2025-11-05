@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,8 +21,10 @@ use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
+mod shares;
 
 use config::ServerConfig;
+use shares::ShareState;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -118,6 +122,19 @@ async fn main() -> Result<()> {
     );
     info!("Shares: {} configured", shares.len());
 
+    // Determine working directory
+    let workdir = server_settings
+        .workdir
+        .as_ref()
+        .map(|p| p.as_path())
+        .unwrap_or_else(|| std::path::Path::new("."));
+
+    // Create working directory if it doesn't exist
+    std::fs::create_dir_all(workdir)
+        .map_err(|e| eyre!("Failed to create working directory {:?}: {}", workdir, e))?;
+
+    info!("Working directory: {:?}", workdir);
+
     // TODO: Implement TLS configuration based on tls_config settings (min_version, ocsp_stapling, client_cert_mode)
     let rustls_config = RustlsConfig::from_pem_file(&tls_config.cert_file, &tls_config.key_file)
         .await
@@ -127,7 +144,7 @@ async fn main() -> Result<()> {
     // The library uses sensible defaults for HTTP/2 configuration
 
     // Build the application with configured middleware
-    let app = build_app(&security_config, &network_config, &shares)?;
+    let app = build_app(&security_config, &network_config, &shares, workdir)?;
 
     // Determine bind address
     let bind_addr = SocketAddr::from((server_settings.bind_address, server_settings.port));
@@ -226,45 +243,48 @@ async fn main() -> Result<()> {
 fn build_app(
     security_config: &config::SecurityConfig,
     network_config: &config::NetworkConfig,
-    shares: &std::collections::HashMap<String, config::ShareConfig>,
+    shares: &HashMap<String, config::ShareConfig>,
+    workdir: &Path,
 ) -> Result<Router> {
-    // TODO: Implement share routing based on shares config
-    // Each share should get its own route with appropriate handlers
+    // Initialize share state
+    let cache_dir = workdir.join("cache");
+    let share_state = ShareState::new(shares.clone(), cache_dir);
 
+    // Create share router with state
+    let share_router = Router::new()
+        .route("/shares/{*path}", get(shares::serve_share))
+        .with_state(share_state);
+
+    // Create base router with health and index endpoints
     let mut app = Router::new()
         .route("/", get(handler))
-        .route("/health", get(health_handler));
+        .route("/health", get(health_handler))
+        .merge(share_router);
 
-    // Add share routes
-    for (name, share_config) in shares {
-        if !share_config.enabled {
-            info!("Share '{}' is disabled, skipping", name);
-            continue;
+    // Log enabled shares
+    if !shares.is_empty() {
+        info!("Share endpoints mounted at /shares/{{*path}}");
+
+        for (name, share_config) in shares {
+            if !share_config.enabled {
+                info!("Share '{}' is disabled, skipping", name);
+                continue;
+            }
+
+            info!(
+                "Share '{}' enabled: {:?} (browseable={}, read_only={})",
+                name, share_config.path, share_config.browseable, share_config.read_only
+            );
         }
-
-        let mount_point = share_config
-            .mount_point
-            .clone()
-            .unwrap_or_else(|| format!("/{}", name));
-
-        info!(
-            "Mounting share '{}' at {} -> {:?}",
-            name, mount_point, share_config.path
-        );
-
-        // TODO: Implement file serving handlers for each share
-        // TODO: Implement browseable/listing if enabled
-        // TODO: Implement read_only enforcement
-        // TODO: Implement authentication based on read_list, write_list, admin_list, deny_list
-        // TODO: Implement guest_ok handling
-        // TODO: Implement max_connections per share
-        // TODO: Implement hide_dot_files filtering
-        // TODO: Implement follow_symlinks setting
-        // TODO: Implement exclude_patterns and include_patterns filtering
-        // TODO: Implement versioning if enabled
-        // TODO: Implement max_file_size enforcement on uploads
-        // TODO: Implement file_locking
     }
+
+    // TODO: Implement write operations (currently read-only)
+    // TODO: Implement authentication based on read_list, write_list, admin_list, deny_list
+    // TODO: Implement guest_ok handling
+    // TODO: Implement max_connections per share
+    // TODO: Implement versioning if enabled
+    // TODO: Implement max_file_size enforcement on uploads
+    // TODO: Implement file_locking
 
     // Apply middleware layers based on security config
     // Build middleware stack conditionally
@@ -337,9 +357,19 @@ mod tests {
     fn test_app() -> Router {
         Router::new()
             .route("/", get(handler))
+            .route("/health", get(health_handler))
             .layer(RequestDecompressionLayer::new())
             .layer(CompressionLayer::new())
             .layer(CorsLayer::permissive())
+    }
+
+    #[tokio::test]
+    async fn test_health_endpoint() {
+        let request = http::Request::get("/health").body(Body::empty()).unwrap();
+
+        let response = test_app().oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     // TODO: Add tests for downloading file with compression

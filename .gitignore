@@ -1,6 +1,12 @@
 /target
+.DS_Store
 
 *.pem
 
-# Config files (keep example)
+# Config files
 config.toml
+
+cache/
+
+# Test Directory
+test/
