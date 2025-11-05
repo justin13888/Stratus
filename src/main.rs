@@ -231,7 +231,9 @@ fn build_app(
     // TODO: Implement share routing based on shares config
     // Each share should get its own route with appropriate handlers
 
-    let mut app = Router::new().route("/", get(handler));
+    let mut app = Router::new()
+        .route("/", get(handler))
+        .route("/health", get(health_handler));
 
     // Add share routes
     for (name, share_config) in shares {
@@ -316,6 +318,10 @@ async fn handler() -> Html<String> {
     // Make the response larger to trigger compression (tower-http has a minimum size threshold)
     Html("<h1>Hello, World!</h1>".repeat(100))
 } // TODO: Remove this
+
+async fn health_handler() -> StatusCode {
+    StatusCode::OK // TODO: Check actual health status
+}
 
 #[cfg(test)]
 mod tests {
