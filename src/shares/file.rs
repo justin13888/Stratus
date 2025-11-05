@@ -1,16 +1,21 @@
 use axum::{
     body::Body,
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use std::path::PathBuf;
 use tokio::fs;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 use tracing::warn;
 
 use crate::config::ShareConfig;
 
-pub async fn serve_file(file_path: &PathBuf, _share_config: &ShareConfig) -> Response {
+pub async fn serve_file(
+    file_path: &PathBuf,
+    _share_config: &ShareConfig,
+    headers: HeaderMap,
+) -> Response {
     // Get file metadata for Content-Length
     let metadata = match fs::metadata(file_path).await {
         Ok(m) => m,
@@ -20,18 +25,39 @@ pub async fn serve_file(file_path: &PathBuf, _share_config: &ShareConfig) -> Res
         }
     };
 
+    let file_size = metadata.len();
+
+    // Check for Range header and parse it
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| {
+            // Parse range header using proper parser
+            http_range_header::parse_range_header(h)
+                .ok()
+                .and_then(|parsed| {
+                    // Validate against file size and get ranges
+                    parsed.validate(file_size).ok()
+                })
+                .and_then(|ranges| {
+                    // Only handle single ranges (not multipart)
+                    if ranges.len() == 1 {
+                        let r = &ranges[0];
+                        Some((*r.start(), *r.end()))
+                    } else {
+                        None
+                    }
+                })
+        });
+
     // Open file for streaming
-    let file = match tokio::fs::File::open(file_path).await {
+    let mut file = match tokio::fs::File::open(file_path).await {
         Ok(f) => f,
         Err(e) => {
             warn!("Failed to open file {:?}: {}", file_path, e);
             return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to open file").into_response();
         }
     };
-
-    // Create a stream with optimal buffer size (64KB chunks)
-    let stream = ReaderStream::with_capacity(file, 64 * 1024);
-    let body = Body::from_stream(stream);
 
     // Determine content type
     let content_type = mime_guess::from_path(file_path)
@@ -47,15 +73,54 @@ pub async fn serve_file(file_path: &PathBuf, _share_config: &ShareConfig) -> Res
     // Use inline disposition for better browser preview support
     let disposition = format!(r#"inline; filename="{}""#, filename);
 
-    (
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, content_type),
-            (header::CONTENT_DISPOSITION, disposition),
-            (header::CONTENT_LENGTH, metadata.len().to_string()),
-            (header::ACCEPT_RANGES, "bytes".to_string()),
-        ],
-        body,
-    )
-        .into_response()
+    match range {
+        Some((start, end)) => {
+            // Serve partial content
+            let content_length = end - start + 1;
+
+            // Seek to start position
+            if let Err(e) = file.seek(std::io::SeekFrom::Start(start)).await {
+                warn!("Failed to seek in file {:?}: {}", file_path, e);
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to read file").into_response();
+            }
+
+            // Take only the requested range
+            let limited_file = file.take(content_length);
+            let stream = ReaderStream::with_capacity(limited_file, 64 * 1024);
+            let body = Body::from_stream(stream);
+
+            let content_range = format!("bytes {}-{}/{}", start, end, file_size);
+
+            (
+                StatusCode::PARTIAL_CONTENT,
+                [
+                    (header::CONTENT_TYPE, content_type),
+                    (header::CONTENT_DISPOSITION, disposition),
+                    (header::CONTENT_LENGTH, content_length.to_string()),
+                    (header::CONTENT_RANGE, content_range),
+                    (header::ACCEPT_RANGES, "bytes".to_string()),
+                ],
+                body,
+            )
+                .into_response()
+        }
+        None => {
+            // Serve full file
+            // Create a stream with optimal buffer size (64KB chunks)
+            let stream = ReaderStream::with_capacity(file, 64 * 1024);
+            let body = Body::from_stream(stream);
+
+            (
+                StatusCode::OK,
+                [
+                    (header::CONTENT_TYPE, content_type),
+                    (header::CONTENT_DISPOSITION, disposition),
+                    (header::CONTENT_LENGTH, file_size.to_string()),
+                    (header::ACCEPT_RANGES, "bytes".to_string()),
+                ],
+                body,
+            )
+                .into_response()
+        }
+    }
 }

@@ -2,7 +2,7 @@ pub use state::ShareState;
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use tokio::fs;
@@ -21,6 +21,7 @@ mod utils;
 pub async fn serve_share(
     State(state): State<ShareState>,
     Path(path_parts): Path<String>,
+    headers: HeaderMap,
 ) -> Response {
     // Split path into share name and file path
     let parts: Vec<&str> = path_parts.splitn(2, '/').collect();
@@ -101,6 +102,6 @@ pub async fn serve_share(
         .await
     } else {
         // Serve file
-        serve_file(&canonical_requested_path, share_config).await
+        serve_file(&canonical_requested_path, share_config, headers).await
     }
 }

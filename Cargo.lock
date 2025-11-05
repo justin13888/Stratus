@@ -1267,6 +1267,7 @@ dependencies = [
  "glob",
  "html-escape",
  "http",
+ "http-range-header",
  "humansize",
  "listenfd",
  "mime_guess",
