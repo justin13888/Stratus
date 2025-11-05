@@ -32,3 +32,15 @@ Prerequisites:
 3. Copy the example config: `cp config.example.toml config.toml`.
 4. (Optional) Edit `config.toml` to customize your server settings
 5. Start development server: `systemfd --no-pid -s http::3000 -- cargo watch -x run`
+
+### Build Container Image
+
+```bash
+podman build -t stratus:latest .
+```
+
+### Test with Docker Compose
+
+```bash
+podman compose up
+```

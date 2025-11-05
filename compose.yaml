@@ -1,0 +1,8 @@
+services:
+  stratus:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: localhost/justin13888/stratus:latest
+    ports:
+      - "8443:443"
