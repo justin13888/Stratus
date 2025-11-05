@@ -2,13 +2,13 @@
 
 Stratus converts your filesystem into your own cloud
 
-## Features
-
-TODO
-
 ## Motivation
 
 Stratus came from the need to access and share files on my personal servers without the hassle of copying over the internet with existing protocols like SMB and SFTP, which lose throughput over high-latency and lossy connections. Other self-hosted cloud storage solutions are great for those who have everything in a single cloud platform but not for those who just want to access their files in a filesystem. Stratus provides a fast, reliable method to access your files remotely with minimal setup.
+
+## Features
+
+- Serve and share files from any filesystem or object storage backend (quick).
 
 ## Example Use Cases
 
