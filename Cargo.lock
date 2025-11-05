@@ -3,29 +3,6 @@
 version = 4
 
 [[package]]
-name = "Stratus"
-version = "0.1.0"
-dependencies = [
- "axum",
- "axum-server",
- "color-eyre",
- "dotenvy",
- "eyre",
- "flate2",
- "http",
- "listenfd",
- "serde",
- "tokio",
- "toml",
- "tower",
- "tower-http",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "zstd",
-]
-
-[[package]]
 name = "addr2line"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1232,6 +1209,29 @@ checksum = "17129e116933cf371d018bb80ae557e889637989d8638274fb25622827b03881"
 dependencies = [
  "libc",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "stratus"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "axum-server",
+ "color-eyre",
+ "dotenvy",
+ "eyre",
+ "flate2",
+ "http",
+ "listenfd",
+ "serde",
+ "tokio",
+ "toml",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "zstd",
 ]
 
 [[package]]
