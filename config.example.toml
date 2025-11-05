@@ -1,0 +1,232 @@
+# Stratus Server Configuration
+# This is an example configuration file showing all available options
+
+[server]
+# Server bind address
+bind_address = "127.0.0.1"
+
+# Server port
+port = 3000
+
+# Server name/identifier
+server_name = "Stratus"
+
+# Working directory for the server (optional)
+# workdir = "/var/lib/stratus"
+
+[tls]
+# Path to TLS certificate file
+cert_file = "cert.pem"
+
+# Path to TLS private key file
+key_file = "key.pem"
+
+# Minimum TLS version ("1.2" or "1.3")
+min_version = "1.3"
+
+# Enable OCSP stapling
+ocsp_stapling = true
+
+# Client certificate authentication mode: "none", "optional", "required"
+client_cert_mode = "none"
+
+# Path to client CA certificate file (for client cert verification)
+# client_ca_file = "client_ca.pem"
+
+# [http2]
+# # Initial connection window size (bytes)
+# # Default: 4MB
+# initial_connection_window_size = 4194304
+
+# # Initial stream window size (bytes)
+# # Default: 2MB
+# initial_stream_window_size = 2097152
+
+# # Maximum concurrent streams per connection
+# max_concurrent_streams = 128
+
+# # Maximum frame size (bytes)
+# # Must be between 16384 and 16777215 (16KB to 16MB)
+# max_frame_size = 16384
+
+# # Keepalive interval (seconds, 0 to disable)
+# keepalive_interval = 60
+
+# # Keepalive timeout (seconds)
+# keepalive_timeout = 20
+
+# [logging]
+# # Log level: "trace", "debug", "info", "warn", "error"
+# level = "info"
+
+# # Log file path (optional, logs to stdout if not specified)
+# file = "/var/log/stratus/server.log"
+
+# # Enable access logging
+# access_log = true
+
+# [network]
+# # Maximum number of concurrent connections
+# max_connections = 10000
+
+# # Connection timeout (seconds)
+# connection_timeout = 60
+
+# # Request timeout (seconds)
+# request_timeout = 30
+
+# # Maximum request body size (bytes)
+# # Default: 100MB
+# max_request_size = 104857600
+
+# # Enable TCP keepalive
+# tcp_keepalive = true
+
+# # TCP keepalive interval (seconds)
+# tcp_keepalive_interval = 60
+
+# # Enable TCP nodelay (disable Nagle's algorithm)
+# tcp_nodelay = true
+
+# # Listen backlog size
+# listen_backlog = 1024
+
+# [security]
+# # Enable authentication
+# auth_required = true
+
+# # Authentication method: "basic", "bearer", "mutual_tls", "custom"
+# auth_method = "basic"
+
+# # Path to user database file (format depends on auth_method)
+# # user_db_file = "users.db"
+
+# # Enable CORS
+# cors_enabled = false
+
+# # CORS allowed origins (empty = all origins)
+# cors_allowed_origins = []
+
+# # Enable rate limiting
+# rate_limiting_enabled = false
+
+# # Rate limit: requests per minute per IP
+# rate_limit = 60
+
+# # Enable compression
+# compression_enabled = true
+
+# # Compression algorithms: "gzip", "zstd", "br"
+# compression_algorithms = ["gzip", "zstd"]
+
+# # Minimum size for compression (bytes)
+# compression_min_size = 1024
+
+# Directory Shares Configuration
+# Similar to Samba, each share is defined as [shares.<name>]
+# The share name becomes the default mount point unless overridden
+
+[shares.test]
+desceription = "Test share for development"
+path = "./test"
+enabled = true
+browseable = true
+read_only = false
+guest_ok = true
+
+# [shares.public]
+# # Human-readable description
+# description = "Public file share"
+
+# # Filesystem path to share
+# path = "/srv/shares/public"
+
+# # Whether the share is enabled
+# enabled = true
+
+# # Whether the share is browseable/listable
+# browseable = true
+
+# # Whether the share is read-only
+# read_only = false
+
+# # List of users/groups with read access (empty = all authenticated users)
+# read_list = []
+
+# # List of users/groups with write access (empty = all authenticated users if not read_only)
+# write_list = []
+
+# # List of users/groups with admin access
+# admin_list = ["admin"]
+
+# # List of users/groups explicitly denied access
+# deny_list = []
+
+# # Allow guest/anonymous access
+# guest_ok = false
+
+# # Maximum number of concurrent connections to this share (optional)
+# # max_connections = 100
+
+# # Hide dot files (files starting with '.')
+# hide_dot_files = false
+
+# # Follow symbolic links
+# follow_symlinks = false
+
+# # File patterns to exclude (glob patterns)
+# exclude_patterns = ["*.tmp", "*.swp", ".DS_Store"]
+
+# # File patterns to include (empty = all files)
+# include_patterns = []
+
+# # Enable versioning/snapshots
+# versioning = false
+
+# # Maximum file size allowed for upload (bytes, 0 = unlimited)
+# max_file_size = 0
+
+# # Enable file locking
+# file_locking = true
+
+# # Custom mount point/URL path (defaults to share name)
+# # mount_point = "/custom-path"
+
+# [shares.media]
+# description = "Media library"
+# path = "/srv/media"
+# enabled = true
+# browseable = true
+# read_only = true
+# read_list = []
+# write_list = ["admin", "media-editors"]
+# admin_list = ["admin"]
+# deny_list = []
+# guest_ok = true
+# hide_dot_files = true
+# follow_symlinks = false
+# exclude_patterns = []
+# include_patterns = ["*.mp4", "*.mkv", "*.mp3", "*.flac", "*.jpg", "*.png"]
+# versioning = false
+# max_file_size = 0
+# file_locking = true
+
+# [shares.documents]
+# description = "Private documents"
+# path = "/srv/documents"
+# enabled = true
+# browseable = true
+# read_only = false
+# read_list = ["admin", "users"]
+# write_list = ["admin", "users"]
+# admin_list = ["admin"]
+# deny_list = ["guest"]
+# guest_ok = false
+# hide_dot_files = false
+# follow_symlinks = false
+# exclude_patterns = ["*.tmp", "~*"]
+# include_patterns = []
+# versioning = true
+# max_file_size = 536870912          # 512MB
+# file_locking = true
+# mount_point = "/docs"

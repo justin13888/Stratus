@@ -17,7 +17,7 @@ Stratus came from the need to access and share files on my personal servers with
 
 ## Compatibility
 
-Stratus is explicitly designed and tested for GNU/Linux distributions with POSIX-compliant filesystems. It is optimized with Linux-specific APIs such as io_uring. It is typical that servers are running Linux-based OSes anyways.
+Stratus is explicitly designed and tested for GNU/Linux distributions with POSIX-compliant filesystems. It is optimized with Linux-specific APIs such as io_uring. It is typical that servers are running Linux-based OSes anyways. (While code may compile to other targets, you are on your own there.)
 
 ## Development
 
@@ -29,4 +29,6 @@ Prerequisites:
 
 1. Install some dependencies: `cargo install cargo-watch systemfd`
 2. Generate self-signed TLS certificates: `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=localhost"`
-3. Start development server: `systemfd --no-pid -s http::3000 -- cargo watch -x run`
+3. Copy the example config: `cp config.example.toml config.toml`.
+4. (Optional) Edit `config.toml` to customize your server settings
+5. Start development server: `systemfd --no-pid -s http::3000 -- cargo watch -x run`
