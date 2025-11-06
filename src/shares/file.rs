@@ -4,20 +4,21 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use std::path::PathBuf;
-use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 use tracing::warn;
 
 use crate::config::ShareConfig;
+use crate::vfs::Vfs;
 
-pub async fn serve_file(
+pub async fn serve_file<V: Vfs>(
     file_path: &PathBuf,
     _share_config: &ShareConfig,
     headers: HeaderMap,
+    vfs: &V,
 ) -> Response {
     // Get file metadata for Content-Length
-    let metadata = match fs::metadata(file_path).await {
+    let metadata = match vfs.metadata(file_path).await {
         Ok(m) => m,
         Err(e) => {
             warn!("Failed to get file metadata {:?}: {}", file_path, e);
@@ -25,7 +26,7 @@ pub async fn serve_file(
         }
     };
 
-    let file_size = metadata.len();
+    let file_size = metadata.len;
 
     // Check for Range header and parse it
     let range = headers
@@ -51,7 +52,7 @@ pub async fn serve_file(
         });
 
     // Open file for streaming
-    let mut file = match tokio::fs::File::open(file_path).await {
+    let mut file = match vfs.open(file_path).await {
         Ok(f) => f,
         Err(e) => {
             warn!("Failed to open file {:?}: {}", file_path, e);
@@ -65,10 +66,9 @@ pub async fn serve_file(
         .to_string();
 
     // Get filename for Content-Disposition
-    let filename = file_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("download");
+    let filename = vfs
+        .file_name(file_path)
+        .unwrap_or_else(|| "download".to_string());
 
     // Use inline disposition for better browser preview support
     let disposition = format!(r#"inline; filename="{}""#, filename);

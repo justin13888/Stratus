@@ -3,12 +3,13 @@ use axum::{
     response::{Html, IntoResponse, Response},
 };
 use eyre::Result;
-use std::path::PathBuf;
-use tokio::fs;
+use futures::StreamExt;
+use std::path::Path;
 use tracing::warn;
 
 use super::html::generate_directory_html;
 use crate::config::ShareConfig;
+use crate::vfs::Vfs;
 
 #[derive(Debug)]
 pub struct DirEntry {
@@ -18,15 +19,16 @@ pub struct DirEntry {
     pub modified: Option<std::time::SystemTime>,
 }
 
-pub async fn serve_directory_listing(
+pub async fn serve_directory_listing<V: Vfs>(
     share_name: &str,
     relative_path: &str,
-    dir_path: &PathBuf,
+    dir_path: &Path,
     share_config: &ShareConfig,
-    cache_dir: &PathBuf,
+    cache_dir: &Path,
+    vfs: &V,
 ) -> Response {
     // Create cache directory if it doesn't exist
-    if let Err(e) = fs::create_dir_all(cache_dir).await {
+    if let Err(e) = vfs.create_dir_all(cache_dir).await {
         warn!("Failed to create cache directory: {}", e);
     }
 
@@ -39,18 +41,18 @@ pub async fn serve_directory_listing(
 
     // Check cache with mtime validation
     if let (Ok(cache_metadata), Ok(dir_metadata)) = (
-        fs::metadata(&cache_file).await,
-        fs::metadata(dir_path).await,
-    ) && let (Ok(cache_mtime), Ok(dir_mtime)) =
-        (cache_metadata.modified(), dir_metadata.modified())
+        vfs.metadata(&cache_file).await,
+        vfs.metadata(dir_path).await,
+    ) && let (Some(cache_mtime), Some(dir_mtime)) =
+        (cache_metadata.modified, dir_metadata.modified)
         && cache_mtime > dir_mtime // Cache is valid if newer than directory
-        && let Ok(cached_html) = fs::read_to_string(&cache_file).await
+        && let Ok(cached_html) = vfs.read_to_string(&cache_file).await
     {
         return Html(cached_html).into_response();
     }
 
     // Generate fresh listing
-    let entries = match read_directory_entries(dir_path, share_config).await {
+    let entries = match read_directory_entries(dir_path, share_config, vfs).await {
         Ok(e) => e,
         Err(e) => {
             warn!("Failed to read directory {:?}: {}", dir_path, e);
@@ -67,8 +69,12 @@ pub async fn serve_directory_listing(
     // Cache asynchronously in background
     let cache_file_clone = cache_file.clone();
     let html_clone = html.clone();
+    let vfs_clone = vfs.clone();
     tokio::spawn(async move {
-        if let Err(e) = fs::write(&cache_file_clone, &html_clone).await {
+        if let Err(e) = vfs_clone
+            .write(&cache_file_clone, html_clone.as_bytes())
+            .await
+        {
             warn!("Failed to cache directory listing: {}", e);
         }
     });
@@ -76,12 +82,13 @@ pub async fn serve_directory_listing(
     Html(html).into_response()
 }
 
-async fn read_directory_entries(
-    dir_path: &PathBuf,
+async fn read_directory_entries<V: Vfs>(
+    dir_path: &Path,
     share_config: &ShareConfig,
+    vfs: &V,
 ) -> Result<Vec<DirEntry>> {
     let mut entries = Vec::with_capacity(256); // Pre-allocate for better performance
-    let mut read_dir = fs::read_dir(dir_path).await?;
+    let mut vfs_entries = vfs.read_dir(dir_path);
 
     // Compile glob patterns once (outside the loop)
     let exclude_patterns: Vec<_> = share_config
@@ -96,8 +103,10 @@ async fn read_directory_entries(
         .filter_map(|pattern| glob::Pattern::new(pattern).ok())
         .collect();
 
-    while let Some(entry) = read_dir.next_entry().await? {
-        let name = entry.file_name().to_string_lossy().to_string();
+    // Process entries from the stream
+    while let Some(entry_result) = vfs_entries.next().await {
+        let entry = entry_result?;
+        let name = entry.name;
 
         // Skip hidden files if configured
         if share_config.hide_dot_files && name.starts_with('.') {
@@ -114,19 +123,18 @@ async fn read_directory_entries(
             continue;
         }
 
-        let metadata = entry.metadata().await?;
-        let is_dir = metadata.is_dir();
+        let is_dir = entry.metadata.is_dir;
 
         // Skip symlinks if not configured to follow them
-        if metadata.is_symlink() && !share_config.follow_symlinks {
+        if entry.metadata.is_symlink && !share_config.follow_symlinks {
             continue;
         }
 
         entries.push(DirEntry {
             name,
             is_dir,
-            size: metadata.len(),
-            modified: metadata.modified().ok(),
+            size: entry.metadata.len,
+            modified: entry.metadata.modified,
         });
     }
 

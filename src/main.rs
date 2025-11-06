@@ -23,6 +23,7 @@ use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberI
 
 mod config;
 mod shares;
+mod vfs;
 
 use config::ServerConfig;
 use shares::ShareState;
@@ -243,9 +244,10 @@ fn build_app(
     shares: &HashMap<String, config::ShareConfig>,
     workdir: &Path,
 ) -> Result<Router> {
-    // Initialize share state
+    // Initialize share state with LocalFs backend
     let cache_dir = workdir.join("cache");
-    let share_state = ShareState::new(shares.clone(), cache_dir);
+    let vfs = vfs::backend::LocalFs::new();
+    let share_state = ShareState::new(shares.clone(), cache_dir, vfs);
 
     // Create share router with state
     let share_router = Router::new()

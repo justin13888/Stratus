@@ -5,11 +5,12 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use tokio::fs;
 use tracing::{debug, warn};
 
 use directory::serve_directory_listing;
 use file::serve_file;
+
+use crate::vfs::Vfs;
 
 mod directory;
 mod file;
@@ -18,8 +19,8 @@ mod state;
 mod utils;
 
 /// Handle requests to /shares/{share_name}/**
-pub async fn serve_share(
-    State(state): State<ShareState>,
+pub async fn serve_share<V: Vfs>(
+    State(state): State<ShareState<V>>,
     Path(path_parts): Path<String>,
     headers: HeaderMap,
 ) -> Response {
@@ -46,10 +47,10 @@ pub async fn serve_share(
     }
 
     // Construct the full filesystem path
-    let requested_path = share_config.path.join(file_path);
+    let requested_path = state.vfs.join(&share_config.path, file_path);
 
     // Security check: ensure the path is within the share directory
-    let canonical_share_path = match fs::canonicalize(&share_config.path).await {
+    let canonical_share_path = match state.vfs.canonicalize(&share_config.path).await {
         Ok(p) => p,
         Err(e) => {
             warn!("Failed to canonicalize share path: {}", e);
@@ -57,7 +58,7 @@ pub async fn serve_share(
         }
     };
 
-    let canonical_requested_path = match fs::canonicalize(&requested_path).await {
+    let canonical_requested_path = match state.vfs.canonicalize(&requested_path).await {
         Ok(p) => p,
         Err(_) => {
             // Path doesn't exist
@@ -65,7 +66,10 @@ pub async fn serve_share(
         }
     };
 
-    if !canonical_requested_path.starts_with(&canonical_share_path) {
+    if !state
+        .vfs
+        .path_starts_with(&canonical_requested_path, &canonical_share_path)
+    {
         warn!(
             "Path traversal attempt detected: {:?} not in {:?}",
             canonical_requested_path, canonical_share_path
@@ -74,7 +78,7 @@ pub async fn serve_share(
     }
 
     // Check if path is a directory or file
-    let metadata = match fs::metadata(&canonical_requested_path).await {
+    let metadata = match state.vfs.metadata(&canonical_requested_path).await {
         Ok(m) => m,
         Err(e) => {
             warn!(
@@ -85,7 +89,7 @@ pub async fn serve_share(
         }
     };
 
-    if metadata.is_dir() {
+    if metadata.is_dir {
         // Check if browseable
         if !share_config.browseable {
             return (StatusCode::FORBIDDEN, "Directory listing disabled").into_response();
@@ -98,10 +102,11 @@ pub async fn serve_share(
             &canonical_requested_path,
             share_config,
             &state.cache_dir,
+            &state.vfs,
         )
         .await
     } else {
         // Serve file
-        serve_file(&canonical_requested_path, share_config, headers).await
+        serve_file(&canonical_requested_path, share_config, headers, &state.vfs).await
     }
 }
