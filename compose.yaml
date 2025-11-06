@@ -4,5 +4,32 @@ services:
       context: .
       dockerfile: Containerfile
     image: localhost/justin13888/stratus:latest
+    environment:
+      # Override default port if needed
+      PORT: 443
     ports:
-      - "443:443" # Change both host and container ports together as needed
+      # Map host port to container port
+      # Format: "host_port:container_port"
+      # Example: "8443:8443" for port 8443, "443:443" for standard HTTPS
+      - "443:443"
+    volumes:
+      # Mount your config file to customize the server port
+      # The port in config.toml should match the PORT env variable
+      - ./config.toml:/app/config.toml:ro
+      - ./cert.pem:/app/cert.pem:ro
+      - ./key.pem:/app/key.pem:ro
+    healthcheck:
+      # Healthcheck that respects the PORT environment variable
+      test:
+        [
+          "CMD",
+          "sh",
+          "-c",
+          "curl -f -k https://localhost:$$PORT/health || exit 1",
+        ]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+      # To disable healthcheck, use:
+      # disable: true

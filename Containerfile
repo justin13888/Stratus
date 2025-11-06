@@ -19,9 +19,9 @@ RUN cargo build --release
 # Runtime stage
 FROM debian:bookworm-slim
 
-# Install curl for healthcheck
+# Install ca-certificates for TLS
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -36,12 +36,16 @@ COPY --from=builder /app/target/release/stratus /usr/local/bin/stratus
 # Switch to non-root user
 USER appuser
 
-# Expose ports
-EXPOSE 443/tcp
+# Default port (can be overridden)
+ENV PORT=443
 
-# Health check using curl to hit the /health endpoint
+# Expose ports (this is documentation only, actual port binding happens at runtime)
+EXPOSE ${PORT}/tcp
+
+# Healthcheck using curl with PORT environment variable
+# The sh -c wrapper allows environment variable expansion
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f -k https://localhost:443/health || exit 1
+    CMD sh -c 'curl -f -k https://localhost:${PORT}/health || exit 1'
 
 # Run the binary
 CMD ["stratus"]
