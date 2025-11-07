@@ -28,7 +28,7 @@ Prerequisites:
 ### Start Development Server
 
 1. Install some dependencies: `cargo install cargo-watch systemfd`
-2. Generate self-signed TLS certificates: `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=localhost"`
+2. Generate self-signed TLS certificates: `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=localhost" && chmod 644 key.pem cert.pem`
 3. Copy the example config: `cp config.example.toml config.toml`.
 4. (Optional) Edit `config.toml` to customize your server settings
 5. Start development server: `systemfd --no-pid -s http::8443 -- cargo watch -x run`

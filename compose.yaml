@@ -18,6 +18,7 @@ services:
       - ./config.toml:/app/config.toml:ro
       - ./cert.pem:/app/cert.pem:ro
       - ./key.pem:/app/key.pem:ro
+      - ./test:/app/test:ro
     healthcheck:
       # Healthcheck that respects the PORT environment variable
       test:
