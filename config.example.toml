@@ -99,15 +99,16 @@ endpoint = "/metrics"
 # listen_backlog = 1024
 
 [security]
-# Enable authentication ❌ (loaded but not implemented)
-# auth_required = true
+# Enable authentication ✅
+auth_required = true
 
-# Authentication method: "basic", "bearer", "mutual_tls", "custom" ❌ (loaded but not implemented)
-# auth_method = "basic"
+# Authentication method: "basic", "bearer", "mutual_tls" ✅ (basic auth implemented)
+auth_method = "basic"
 
-
-# Path to user database file (format depends on auth_method) ❌ (loaded but not implemented)
-# user_db_file = "users.db"
+# Path to user database file (format depends on auth_method) ✅ (TOML format for basic auth)
+# For basic auth, use a TOML file with [users.<username>] sections
+# See users.example.toml for format
+user_db_file = "users.toml"
 
 # Enable CORS ✅
 # cors_enabled = false
@@ -159,19 +160,34 @@ guest_ok = true                             # ❌ Not implemented
 # # Whether the share is read-only
 # read_only = false
 
-# # List of users/groups with read access (empty = all authenticated users)
+# # ACCESS CONTROL LISTS (ACLs) - ✅ Fully implemented
+# # Authorization is checked in this order:
+# # 1. deny_list (takes precedence over everything)
+# # 2. admin_list (grants full access)
+# # 3. write_list (grants read + write access)
+# # 4. read_list (grants read-only access)
+# # 5. If all lists are empty, all authenticated users get default access
+# #    (read/write if not read_only, read-only if read_only)
+# # 
+# # Groups can be specified as: "groupname", "@groupname", or "+groupname"
+# # Examples: ["alice", "bob", "@developers", "+admins"]
+
+# # List of users/groups with read access
+# # Empty = all authenticated users (if other lists are also empty)
 # read_list = []
 
-# # List of users/groups with write access (empty = all authenticated users if not read_only)
+# # List of users/groups with write access
+# # Empty = all authenticated users can write (if not read_only and other lists are empty)
 # write_list = []
 
-# # List of users/groups with admin access
+# # List of users/groups with admin access (full control)
 # admin_list = ["admin"]
 
-# # List of users/groups explicitly denied access
+# # List of users/groups explicitly DENIED access (takes precedence over all other lists)
 # deny_list = []
 
-# # Allow guest/anonymous access
+# # Allow guest/anonymous access (unauthenticated users get read-only access)
+# # Write operations always require authentication
 # guest_ok = false
 
 # # Maximum number of concurrent connections to this share (optional)
@@ -181,6 +197,9 @@ guest_ok = true                             # ❌ Not implemented
 # hide_dot_files = false
 
 # # Follow symbolic links
+# # SECURITY: When false (recommended), symlinks are completely denied.
+# # When true, symlinks are allowed but validated to ensure they stay within the share boundary.
+# # Symlinks pointing outside the share are always denied regardless of this setting.
 # follow_symlinks = false
 
 # # File patterns to exclude (glob patterns)

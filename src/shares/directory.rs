@@ -25,6 +25,7 @@ pub async fn serve_directory_listing<V: Vfs>(
     dir_path: &Path,
     share_config: &ShareConfig,
     cache_dir: &Path,
+    canonical_share_path: &Path,
     vfs: &V,
 ) -> Response {
     use std::time::Instant;
@@ -55,18 +56,19 @@ pub async fn serve_directory_listing<V: Vfs>(
     }
 
     // Generate fresh listing
-    let entries = match read_directory_entries(dir_path, share_config, vfs).await {
-        Ok(e) => e,
-        Err(e) => {
-            warn!("Failed to read directory {:?}: {}", dir_path, e);
-            crate::metrics::record_file_operation("read_directory", start.elapsed());
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to read directory",
-            )
-                .into_response();
-        }
-    };
+    let entries =
+        match read_directory_entries(dir_path, share_config, canonical_share_path, vfs).await {
+            Ok(e) => e,
+            Err(e) => {
+                warn!("Failed to read directory {:?}: {}", dir_path, e);
+                crate::metrics::record_file_operation("read_directory", start.elapsed());
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to read directory",
+                )
+                    .into_response();
+            }
+        };
 
     crate::metrics::record_file_operation("read_directory", start.elapsed());
 
@@ -91,6 +93,7 @@ pub async fn serve_directory_listing<V: Vfs>(
 async fn read_directory_entries<V: Vfs>(
     dir_path: &Path,
     share_config: &ShareConfig,
+    canonical_share_path: &Path,
     vfs: &V,
 ) -> Result<Vec<DirEntry>> {
     let mut entries = Vec::with_capacity(256); // Pre-allocate for better performance
@@ -134,6 +137,33 @@ async fn read_directory_entries<V: Vfs>(
         // Skip symlinks if not configured to follow them
         if entry.metadata.is_symlink && !share_config.follow_symlinks {
             continue;
+        }
+
+        // Security check: if this is a symlink and follow_symlinks is enabled,
+        // verify the symlink target stays within the share boundary
+        if entry.metadata.is_symlink && share_config.follow_symlinks {
+            let entry_path = dir_path.join(&name);
+            match vfs
+                .validate_path_within_base(&entry_path, canonical_share_path)
+                .await
+            {
+                Ok(true) => {
+                    // Symlink target is within bounds, allow it
+                }
+                Ok(false) => {
+                    // Symlink points outside the share, skip it
+                    warn!(
+                        "Skipping symlink that points outside share: {:?}",
+                        entry_path
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    // Error validating symlink, skip it to be safe
+                    warn!("Error validating symlink {:?}: {}, skipping", entry_path, e);
+                    continue;
+                }
+            }
         }
 
         entries.push(DirEntry {

@@ -6,7 +6,9 @@
 # Config files
 config.toml
 
-cache/
+# User database files
+users.toml
 
-# Test Directory
+# Temporary directories
+cache/
 test/

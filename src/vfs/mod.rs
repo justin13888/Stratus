@@ -53,10 +53,54 @@ pub trait Vfs: Send + Sync + Clone + 'static {
     /// Get metadata for a file or directory
     ///
     /// Returns metadata including type (file/dir/symlink), size, and modification time.
+    /// This should use symlink_metadata to NOT follow symlinks, allowing detection
+    /// of symlinks before they are resolved.
     fn metadata(
         &self,
         path: &Path,
     ) -> impl std::future::Future<Output = io::Result<VfsMetadata>> + Send;
+
+    /// Validate that a path (which may be a symlink) resolves to a location within the allowed base path
+    ///
+    /// This is a critical security function that prevents symlink attacks. It:
+    /// 1. Checks if the path is a symlink using metadata()
+    /// 2. If it is a symlink, canonicalizes it to get the real target
+    /// 3. Verifies the canonical target is within the allowed base path
+    ///
+    /// Returns Ok(true) if the path is safe to access, Ok(false) if it's a symlink pointing
+    /// outside the base path, or Err if there was an error checking.
+    fn validate_path_within_base(
+        &self,
+        path: &Path,
+        base: &Path,
+    ) -> impl std::future::Future<Output = io::Result<bool>> + Send {
+        async move {
+            // First, get metadata without following symlinks
+            let metadata = self.metadata(path).await?;
+
+            // If it's a symlink, we need to check where it points
+            if metadata.is_symlink {
+                // Canonicalize to resolve the symlink target
+                match self.canonicalize(path).await {
+                    Ok(canonical_target) => {
+                        // Check if the resolved target is within the base path
+                        Ok(self.path_starts_with(&canonical_target, base))
+                    }
+                    Err(_) => {
+                        // If canonicalization fails (broken symlink), deny access
+                        Ok(false)
+                    }
+                }
+            } else {
+                // Not a symlink, perform normal path check
+                // We still need to canonicalize to handle .. and . in the path
+                match self.canonicalize(path).await {
+                    Ok(canonical_path) => Ok(self.path_starts_with(&canonical_path, base)),
+                    Err(_) => Ok(false),
+                }
+            }
+        }
+    }
 
     /// Check if a path exists
     fn exists(&self, path: &Path) -> impl std::future::Future<Output = bool> + Send {

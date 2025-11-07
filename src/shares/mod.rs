@@ -1,8 +1,8 @@
 pub use state::ShareState;
 
 use axum::{
-    extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    extract::{Path, Request, State},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use tracing::{debug, warn};
@@ -10,8 +10,10 @@ use tracing::{debug, warn};
 use directory::serve_directory_listing;
 use file::serve_file;
 
+use crate::auth::get_authenticated_user;
 use crate::vfs::Vfs;
 
+mod authz;
 mod directory;
 mod file;
 mod html;
@@ -22,8 +24,10 @@ mod utils;
 pub async fn serve_share<V: Vfs>(
     State(state): State<ShareState<V>>,
     Path(path_parts): Path<String>,
-    headers: HeaderMap,
+    request: Request,
 ) -> Response {
+    let headers = request.headers().clone();
+    let user = get_authenticated_user(&request);
     use std::time::Instant;
 
     let start = Instant::now();
@@ -52,6 +56,17 @@ pub async fn serve_share<V: Vfs>(
         return (StatusCode::FORBIDDEN, "Share is disabled").into_response();
     }
 
+    // Authorization check: verify user has at least read access
+    if !authz::check_permission(user, share_config, authz::Permission::Read) {
+        warn!(
+            "User {:?} denied access to share '{}'",
+            user.map(|u| &u.username),
+            share_name
+        );
+        crate::metrics::record_share_request(share_name, 0, false);
+        return (StatusCode::FORBIDDEN, "Access denied to this share").into_response();
+    }
+
     // Construct the full filesystem path
     let requested_path = state.vfs.join(&share_config.path, file_path);
 
@@ -65,8 +80,9 @@ pub async fn serve_share<V: Vfs>(
         }
     };
 
-    let canonical_requested_path = match state.vfs.canonicalize(&requested_path).await {
-        Ok(p) => p,
+    // First check: does the requested path exist?
+    let metadata = match state.vfs.metadata(&requested_path).await {
+        Ok(m) => m,
         Err(_) => {
             // Path doesn't exist
             crate::metrics::record_share_request(share_name, 0, false);
@@ -74,27 +90,44 @@ pub async fn serve_share<V: Vfs>(
         }
     };
 
-    if !state
-        .vfs
-        .path_starts_with(&canonical_requested_path, &canonical_share_path)
-    {
+    // Security check for symlinks: If this is a symlink and follow_symlinks is disabled, deny access
+    if metadata.is_symlink && !share_config.follow_symlinks {
         warn!(
-            "Path traversal attempt detected: {:?} not in {:?}",
-            canonical_requested_path, canonical_share_path
+            "Symlink access denied (follow_symlinks=false): {:?}",
+            requested_path
+        );
+        crate::metrics::record_share_request(share_name, 0, false);
+        return (StatusCode::FORBIDDEN, "Symlink access denied").into_response();
+    }
+
+    // Critical security check: Validate that the path (including symlink targets) stays within bounds
+    let is_within_base = match state
+        .vfs
+        .validate_path_within_base(&requested_path, &canonical_share_path)
+        .await
+    {
+        Ok(valid) => valid,
+        Err(e) => {
+            warn!("Failed to validate path {:?}: {}", requested_path, e);
+            crate::metrics::record_share_request(share_name, 0, false);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response();
+        }
+    };
+
+    if !is_within_base {
+        warn!(
+            "Path traversal attempt detected: {:?} escapes {:?}",
+            requested_path, canonical_share_path
         );
         crate::metrics::record_share_request(share_name, 0, false);
         return (StatusCode::FORBIDDEN, "Access denied").into_response();
     }
 
-    // Check if path is a directory or file
-    let metadata = match state.vfs.metadata(&canonical_requested_path).await {
-        Ok(m) => m,
-        Err(e) => {
-            warn!(
-                "Failed to get metadata for {:?}: {}",
-                canonical_requested_path, e
-            );
-            crate::metrics::record_file_operation("metadata", start.elapsed());
+    // Now get the canonical path for actual file operations
+    let canonical_requested_path = match state.vfs.canonicalize(&requested_path).await {
+        Ok(p) => p,
+        Err(_) => {
+            // Shouldn't happen since we already checked metadata, but be safe
             crate::metrics::record_share_request(share_name, 0, false);
             return (StatusCode::NOT_FOUND, "File or directory not found").into_response();
         }
@@ -116,6 +149,7 @@ pub async fn serve_share<V: Vfs>(
             &canonical_requested_path,
             share_config,
             &state.cache_dir,
+            &canonical_share_path,
             &state.vfs,
         )
         .await
