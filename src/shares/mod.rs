@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 
 use directory::serve_directory_listing;
 use file::serve_file;
@@ -65,6 +65,12 @@ pub async fn serve_share<V: Vfs>(
         );
         crate::metrics::record_share_request(share_name, 0, false);
         return (StatusCode::FORBIDDEN, "Access denied to this share").into_response();
+    } else {
+        trace!(
+            "User {:?} granted access to share '{}'",
+            user.map(|u| &u.username),
+            share_name
+        );
     }
 
     // Construct the full filesystem path
