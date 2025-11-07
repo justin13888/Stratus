@@ -85,3 +85,17 @@ port = 9090
 Stratus supports HTTP Basic Authentication with argon2id password hashing. It also supports auth methods like JWT/Bearer tokens with OpenID Connect.
 
 See [docs/authentication.md](docs/authentication.md) for details.
+
+## Other Technologies for the Curious
+
+### Relevant Protocols
+
+- WebDAV: Simple, well-standardized extension to HTTP for file management. Supported by multiple clients and servers but many implementations are hidden behind paywall or no longer actively maintained.
+- Samba: Widely-adopted network filesystem protocol. Highly stateless, SMB-over-QUIC is being worked on but not yet complete/widely supported.
+- S3: Standard object storage protocol adopted by countless vendors. Incompatible with POSIX filesystem semantics but it serves vastly different use-cases.
+
+### Similar Services
+
+- Nextcloud/ownCloud: Open-source cloud storage solutions with their own suites of features. But they don't - expose your filesystem or do some sort of sync (e.g. Nextcloud External Storage)
+- Google Drive/Dropbox/OneDrive/iCloud: These are proprietary cloud services with other integrations. They may be great for many use cases, but not this.
+- Spacedrive: Open, distributed storage that is leaving alpha stage.
