@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
 
     // Load configuration first
-    let config = ServerConfig::from_file("./config.toml").map_err(|e| eyre!(e))?; // TODO: Fetch config path from CLI arg or env
+    let config = ServerConfig::from_file("./config.toml").map_err(|e| eyre!(e))?;
 
     let ServerConfig {
         server: server_settings,
