@@ -45,7 +45,6 @@ pub enum AuthMethod {
     Basic,
     Bearer,
     MutualTls,
-    Custom,
 }
 
 /// Compression algorithm
@@ -95,6 +94,7 @@ pub struct ServerConfig {
 
 /// Core server settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ServerSettings {
     /// Server bind address
     #[serde(default = "default_bind_address")]
@@ -115,6 +115,7 @@ pub struct ServerSettings {
 
 /// TLS/SSL configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TlsConfig {
     /// Path to TLS certificate file
     pub cert_file: PathBuf,
@@ -141,6 +142,7 @@ pub struct TlsConfig {
 
 /// HTTP/2 specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Http2Config {
     /// Initial connection window size (bytes)
     #[serde(default = "default_connection_window_size")]
@@ -169,6 +171,7 @@ pub struct Http2Config {
 
 /// Logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LoggingConfig {
     /// Log level
     #[serde(default)]
@@ -185,6 +188,7 @@ pub struct LoggingConfig {
 
 /// Metrics configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MetricsConfig {
     /// Enable metrics collection
     #[serde(default = "default_true")]
@@ -205,6 +209,7 @@ pub struct MetricsConfig {
 
 /// Network and connection settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NetworkConfig {
     /// Maximum number of concurrent connections
     #[serde(default = "default_max_connections")]
@@ -241,6 +246,7 @@ pub struct NetworkConfig {
 
 /// Security and authentication settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SecurityConfig {
     /// Enable authentication
     #[serde(default = "default_true")]
@@ -285,6 +291,7 @@ pub struct SecurityConfig {
 
 /// Directory share configuration (similar to Samba shares)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShareConfig {
     /// Human-readable description of the share
     #[serde(default)]

@@ -7,6 +7,8 @@ edition = "2024"
 async-stream = "0.3"
 axum = { version = "0.8.6", features = ["http2"] }
 axum-server = { version = "0.7.2", features = ["rustls", "tls-rustls"] }
+argon2 = "0.5"
+base64 = "0.22"
 chrono = "0.4"
 color-eyre = "0.6.5"
 dotenvy = "0.15.7"

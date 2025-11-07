@@ -22,6 +22,7 @@ use tower_http::{
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
+mod auth;
 mod config;
 mod metrics;
 mod shares;
@@ -390,6 +391,13 @@ fn build_app(
     let vfs = vfs::backend::LocalFs::new();
     let share_state = ShareState::new(shares.clone(), cache_dir, vfs);
 
+    // Create authentication provider
+    let auth_provider = auth::create_auth_provider(security_config)?;
+    info!(
+        "Authentication: enabled={}, method={:?}",
+        security_config.auth_required, security_config.auth_method
+    );
+
     // Create share router with state
     let share_router = Router::new()
         .route("/shares/{*path}", get(shares::serve_share))
@@ -431,7 +439,7 @@ fn build_app(
     }
 
     // TODO: Implement write operations (currently read-only)
-    // TODO: Implement authentication based on read_list, write_list, admin_list, deny_list
+    // TODO: Implement authorization based on read_list, write_list, admin_list, deny_list
     // TODO: Implement guest_ok handling
     // TODO: Implement max_connections per share
     // TODO: Implement versioning if enabled
@@ -525,7 +533,18 @@ fn build_app(
         app = app.layer(cors);
     }
 
-    // TODO: Implement authentication middleware based on security_config.auth_required and auth_method
+    // Add authentication middleware if required
+    if security_config.auth_required {
+        let auth_middleware = auth::AuthMiddleware::new(Arc::clone(&auth_provider));
+        app = app.layer(axum::middleware::from_fn(move |req, next| {
+            auth_middleware.clone().authenticate(req, next)
+        }));
+        info!(
+            "Authentication middleware enabled (method: {:?})",
+            security_config.auth_method
+        );
+    }
+
     // TODO: Implement rate limiting if security_config.rate_limiting_enabled
     // TODO: Implement access logging if logging_config.access_log is enabled
 

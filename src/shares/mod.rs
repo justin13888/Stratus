@@ -1,8 +1,8 @@
 pub use state::ShareState;
 
 use axum::{
-    extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    extract::{Path, Request, State},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use tracing::{debug, warn};
@@ -10,8 +10,10 @@ use tracing::{debug, warn};
 use directory::serve_directory_listing;
 use file::serve_file;
 
+use crate::auth::get_authenticated_user;
 use crate::vfs::Vfs;
 
+mod authz;
 mod directory;
 mod file;
 mod html;
@@ -22,8 +24,10 @@ mod utils;
 pub async fn serve_share<V: Vfs>(
     State(state): State<ShareState<V>>,
     Path(path_parts): Path<String>,
-    headers: HeaderMap,
+    request: Request,
 ) -> Response {
+    let headers = request.headers().clone();
+    let user = get_authenticated_user(&request);
     use std::time::Instant;
 
     let start = Instant::now();
@@ -50,6 +54,17 @@ pub async fn serve_share<V: Vfs>(
         warn!("Share '{}' is disabled", share_name);
         crate::metrics::record_share_request(share_name, 0, false);
         return (StatusCode::FORBIDDEN, "Share is disabled").into_response();
+    }
+
+    // Authorization check: verify user has at least read access
+    if !authz::check_permission(user, share_config, authz::Permission::Read) {
+        warn!(
+            "User {:?} denied access to share '{}'",
+            user.map(|u| &u.username),
+            share_name
+        );
+        crate::metrics::record_share_request(share_name, 0, false);
+        return (StatusCode::FORBIDDEN, "Access denied to this share").into_response();
     }
 
     // Construct the full filesystem path

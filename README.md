@@ -13,6 +13,7 @@ Stratus came from the need to access and share files on my personal servers with
 ### HTTP Server
 
 - High-performance HTTP/2 with TLS
+- HTTP Authentication (Basic, Bearer, Mutual TLS)
 - Configurable compression, CORS, and security settings
 - Directory browsing with caching
 - Range request support for streaming and partial downloads
@@ -38,8 +39,20 @@ Prerequisites:
 1. Install some dependencies: `cargo install cargo-watch systemfd`
 2. Generate self-signed TLS certificates: `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=localhost" && chmod 644 key.pem cert.pem`
 3. Copy the example config: `cp config.example.toml config.toml`.
-4. (Optional) Edit `config.toml` to customize your server settings
-5. Start development server: `systemfd --no-pid -s http::8443 -- cargo watch -x run`
+4. Set up authentication (optional): `cp users.example.toml users.toml` and edit to add users, or disable auth in `config.toml`
+5. (Optional) Edit `config.toml` to customize your server settings
+6. Start development server: `systemfd --no-pid -s http::8443 -- cargo watch -x run`
+
+Test with curl:
+
+```bash
+# Without auth (if disabled)
+curl -k https://localhost:8443/shares/test/
+
+# With Basic Auth
+curl -k -u admin:admin123 https://localhost:8443/shares/test/ # User: admin, Password: admin123
+```
+
 
 ### Build Container Image
 
@@ -66,3 +79,9 @@ endpoint = "/metrics"
 bind_address = "127.0.0.1"
 port = 9090
 ```
+
+## Authentication
+
+Stratus supports HTTP Basic Authentication with argon2id password hashing. It also supports auth methods like JWT/Bearer tokens with OpenID Connect.
+
+See [docs/authentication.md](docs/authentication.md) for details.
