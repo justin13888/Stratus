@@ -73,7 +73,7 @@ curl -k -u admin:admin123 https://localhost:8443/shares/test/ # User: admin, Pas
 ### Build Container Image
 
 ```bash
-podman build -t stratus:latest .
+podman build -f stratus/Containerfile -t stratus .
 ```
 
 ### Test with Docker Compose
@@ -101,6 +101,7 @@ port = 9090
 Stratus supports HTTP Basic Authentication with argon2id password hashing. It also supports auth methods like JWT/Bearer tokens with OpenID Connect.
 
 Generate password hashes with the `stratus-hashgen` CLI tool:
+
 ```bash
 cargo run -p stratus-hashgen
 ```

@@ -1,7 +1,4 @@
 .git/
-cache/
 target/
-test/
-config.toml
-config.example.toml
-*.pem
+
+compose.yaml

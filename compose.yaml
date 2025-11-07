@@ -2,7 +2,7 @@ services:
   stratus:
     build:
       context: .
-      dockerfile: Containerfile
+      dockerfile: stratus/Containerfile
     environment:
       # Override default port if needed
       PORT: 8443
@@ -14,10 +14,11 @@ services:
     volumes:
       # Mount your config file to customize the server port
       # The port in config.toml should match the PORT env variable
-      - ./config.toml:/app/config.toml:ro
-      - ./cert.pem:/app/cert.pem:ro
-      - ./key.pem:/app/key.pem:ro
-      - ./test:/app/test:ro
+      - ./stratus/config.toml:/app/config.toml:ro
+      - ./stratus/users.toml:/app/users.toml:ro
+      - ./stratus/cert.pem:/app/cert.pem:ro
+      - ./stratus/key.pem:/app/key.pem:ro
+      - ./stratus/test:/app/test:ro
     healthcheck:
       # Healthcheck that respects the PORT environment variable
       test:
