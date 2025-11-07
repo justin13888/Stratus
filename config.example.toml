@@ -181,6 +181,9 @@ guest_ok = true                             # ❌ Not implemented
 # hide_dot_files = false
 
 # # Follow symbolic links
+# # SECURITY: When false (recommended), symlinks are completely denied.
+# # When true, symlinks are allowed but validated to ensure they stay within the share boundary.
+# # Symlinks pointing outside the share are always denied regardless of this setting.
 # follow_symlinks = false
 
 # # File patterns to exclude (glob patterns)

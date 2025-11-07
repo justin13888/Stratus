@@ -77,7 +77,9 @@ impl Vfs for LocalFs {
     }
 
     async fn metadata(&self, path: &Path) -> io::Result<VfsMetadata> {
-        let metadata = fs::metadata(path).await?;
+        // Use symlink_metadata to NOT follow symlinks
+        // This is crucial for security - we need to detect symlinks before following them
+        let metadata = fs::symlink_metadata(path).await?;
         Ok(VfsMetadata {
             is_dir: metadata.is_dir(),
             is_file: metadata.is_file(),
@@ -100,7 +102,9 @@ impl Vfs for LocalFs {
                         match entry_result {
                             Ok(entry) => {
                                 let name = entry.file_name().to_string_lossy().to_string();
-                                match entry.metadata().await {
+                                // Use symlink_metadata to NOT follow symlinks
+                                // This ensures we can detect symlinks before following them
+                                match fs::symlink_metadata(entry.path()).await {
                                     Ok(metadata) => {
                                         yield Ok(VfsEntry {
                                             name,
@@ -146,5 +150,90 @@ impl Vfs for LocalFs {
 
     async fn read_to_string(&self, path: &Path) -> io::Result<String> {
         fs::read_to_string(path).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs as std_fs;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_symlink_detection() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+
+        // Create a file inside the share
+        let inside_file = base_path.join("inside.txt");
+        std_fs::write(&inside_file, "inside content").unwrap();
+
+        // Create a directory outside the share
+        let outside_dir = TempDir::new().unwrap();
+        let outside_file = outside_dir.path().join("outside.txt");
+        std_fs::write(&outside_file, "outside content").unwrap();
+
+        // Create a symlink inside the share pointing to the outside file
+        let symlink_path = base_path.join("evil_link.txt");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside_file, &symlink_path).unwrap();
+
+        let vfs = LocalFs::new();
+
+        // Test that we can detect the symlink
+        let metadata = vfs.metadata(&symlink_path).await.unwrap();
+        assert!(metadata.is_symlink, "Should detect symlink");
+
+        // Test that validate_path_within_base rejects the symlink
+        let canonical_base = vfs.canonicalize(base_path).await.unwrap();
+        let is_valid = vfs
+            .validate_path_within_base(&symlink_path, &canonical_base)
+            .await
+            .unwrap();
+        assert!(!is_valid, "Symlink pointing outside should be rejected");
+
+        // Test that a regular file inside passes validation
+        let is_valid = vfs
+            .validate_path_within_base(&inside_file, &canonical_base)
+            .await
+            .unwrap();
+        assert!(is_valid, "Regular file inside should be accepted");
+
+        // Create a symlink inside pointing to another file inside
+        let inside_link = base_path.join("inside_link.txt");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&inside_file, &inside_link).unwrap();
+
+        let is_valid = vfs
+            .validate_path_within_base(&inside_link, &canonical_base)
+            .await
+            .unwrap();
+        assert!(is_valid, "Symlink pointing inside should be accepted");
+    }
+
+    #[tokio::test]
+    async fn test_path_traversal_prevention() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+
+        // Create subdirectory
+        let subdir = base_path.join("subdir");
+        std_fs::create_dir(&subdir).unwrap();
+
+        // Create a file in the base directory
+        let base_file = base_path.join("secret.txt");
+        std_fs::write(&base_file, "secret").unwrap();
+
+        let vfs = LocalFs::new();
+        let canonical_subdir = vfs.canonicalize(&subdir).await.unwrap();
+
+        // Try to access parent directory using ..
+        let traversal_path = subdir.join("../secret.txt");
+
+        let is_valid = vfs
+            .validate_path_within_base(&traversal_path, &canonical_subdir)
+            .await
+            .unwrap();
+        assert!(!is_valid, "Path traversal using .. should be rejected");
     }
 }
