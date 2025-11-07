@@ -54,6 +54,22 @@ level = "info"
 # Enable access logging ⚠️ (loaded but not implemented)
 # access_log = true
 
+[metrics]
+# Enable Prometheus metrics collection ✅
+enabled = true
+
+# Metrics endpoint path ✅ (default: "/metrics")
+endpoint = "/metrics"
+
+# Optional: Run metrics on a separate HTTP server (no TLS) ✅
+# If you specify a different bind_address or port (or both), metrics will be served on a separate server.
+# - If only bind_address is specified, the main server's port will be used
+# - If only port is specified, the main server's bind_address will be used  
+# - If both are the same as the main server, metrics will be served on the main server
+# This is useful for isolating metrics traffic and simplifying Prometheus configuration
+# bind_address = "127.0.0.1"   # Defaults to main server's bind_address if not specified
+# port = 9090                  # Defaults to main server's port if not specified
+
 [network]
 # Maximum number of concurrent requests ✅ (enforced via tower ConcurrencyLimitLayer)
 # Note: This limits concurrent requests, not TCP connections. In HTTP/2, a single connection

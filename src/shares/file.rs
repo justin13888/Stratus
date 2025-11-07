@@ -4,6 +4,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use std::path::PathBuf;
+use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 use tracing::warn;
@@ -17,14 +18,19 @@ pub async fn serve_file<V: Vfs>(
     headers: HeaderMap,
     vfs: &V,
 ) -> Response {
+    let start = Instant::now();
+
     // Get file metadata for Content-Length
     let metadata = match vfs.metadata(file_path).await {
         Ok(m) => m,
         Err(e) => {
             warn!("Failed to get file metadata {:?}: {}", file_path, e);
+            crate::metrics::record_file_operation("read_metadata", start.elapsed());
             return (StatusCode::NOT_FOUND, "File not found").into_response();
         }
     };
+
+    crate::metrics::record_file_operation("read_metadata", start.elapsed());
 
     let file_size = metadata.len;
 
@@ -52,13 +58,16 @@ pub async fn serve_file<V: Vfs>(
         });
 
     // Open file for streaming
+    let open_start = Instant::now();
     let mut file = match vfs.open(file_path).await {
         Ok(f) => f,
         Err(e) => {
             warn!("Failed to open file {:?}: {}", file_path, e);
+            crate::metrics::record_file_operation("open", open_start.elapsed());
             return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to open file").into_response();
         }
     };
+    crate::metrics::record_file_operation("open", open_start.elapsed());
 
     // Determine content type
     let content_type = mime_guess::from_path(file_path)

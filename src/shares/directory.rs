@@ -27,6 +27,9 @@ pub async fn serve_directory_listing<V: Vfs>(
     cache_dir: &Path,
     vfs: &V,
 ) -> Response {
+    use std::time::Instant;
+    let start = Instant::now();
+
     // Create cache directory if it doesn't exist
     if let Err(e) = vfs.create_dir_all(cache_dir).await {
         warn!("Failed to create cache directory: {}", e);
@@ -56,6 +59,7 @@ pub async fn serve_directory_listing<V: Vfs>(
         Ok(e) => e,
         Err(e) => {
             warn!("Failed to read directory {:?}: {}", dir_path, e);
+            crate::metrics::record_file_operation("read_directory", start.elapsed());
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Failed to read directory",
@@ -63,6 +67,8 @@ pub async fn serve_directory_listing<V: Vfs>(
                 .into_response();
         }
     };
+
+    crate::metrics::record_file_operation("read_directory", start.elapsed());
 
     let html = generate_directory_html(share_name, relative_path, entries);
 

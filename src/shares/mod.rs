@@ -24,6 +24,10 @@ pub async fn serve_share<V: Vfs>(
     Path(path_parts): Path<String>,
     headers: HeaderMap,
 ) -> Response {
+    use std::time::Instant;
+
+    let start = Instant::now();
+
     // Split path into share name and file path
     let parts: Vec<&str> = path_parts.splitn(2, '/').collect();
     let share_name = parts[0];
@@ -36,6 +40,7 @@ pub async fn serve_share<V: Vfs>(
         Some(config) => config,
         None => {
             warn!("Share '{}' not found", share_name);
+            crate::metrics::record_share_request(share_name, 0, false);
             return (StatusCode::NOT_FOUND, "Share not found").into_response();
         }
     };
@@ -43,6 +48,7 @@ pub async fn serve_share<V: Vfs>(
     // Check if share is enabled
     if !share_config.enabled {
         warn!("Share '{}' is disabled", share_name);
+        crate::metrics::record_share_request(share_name, 0, false);
         return (StatusCode::FORBIDDEN, "Share is disabled").into_response();
     }
 
@@ -54,6 +60,7 @@ pub async fn serve_share<V: Vfs>(
         Ok(p) => p,
         Err(e) => {
             warn!("Failed to canonicalize share path: {}", e);
+            crate::metrics::record_share_request(share_name, 0, false);
             return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response();
         }
     };
@@ -62,6 +69,7 @@ pub async fn serve_share<V: Vfs>(
         Ok(p) => p,
         Err(_) => {
             // Path doesn't exist
+            crate::metrics::record_share_request(share_name, 0, false);
             return (StatusCode::NOT_FOUND, "File or directory not found").into_response();
         }
     };
@@ -74,6 +82,7 @@ pub async fn serve_share<V: Vfs>(
             "Path traversal attempt detected: {:?} not in {:?}",
             canonical_requested_path, canonical_share_path
         );
+        crate::metrics::record_share_request(share_name, 0, false);
         return (StatusCode::FORBIDDEN, "Access denied").into_response();
     }
 
@@ -85,13 +94,18 @@ pub async fn serve_share<V: Vfs>(
                 "Failed to get metadata for {:?}: {}",
                 canonical_requested_path, e
             );
+            crate::metrics::record_file_operation("metadata", start.elapsed());
+            crate::metrics::record_share_request(share_name, 0, false);
             return (StatusCode::NOT_FOUND, "File or directory not found").into_response();
         }
     };
 
-    if metadata.is_dir {
+    crate::metrics::record_file_operation("metadata", start.elapsed());
+
+    let response = if metadata.is_dir {
         // Check if browseable
         if !share_config.browseable {
+            crate::metrics::record_share_request(share_name, 0, false);
             return (StatusCode::FORBIDDEN, "Directory listing disabled").into_response();
         }
 
@@ -108,5 +122,16 @@ pub async fn serve_share<V: Vfs>(
     } else {
         // Serve file
         serve_file(&canonical_requested_path, share_config, headers, &state.vfs).await
-    }
+    };
+
+    // Record metrics for successful requests
+    // Note: We approximate bytes served as the file size for successful file requests
+    let bytes_served = if !metadata.is_dir && response.status().is_success() {
+        metadata.len
+    } else {
+        0
+    };
+    crate::metrics::record_share_request(share_name, bytes_served, response.status().is_success());
+
+    response
 }

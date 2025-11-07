@@ -60,6 +60,7 @@ pub enum CompressionAlgorithm {
 
 /// Main server configuration loaded from TOML file
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     /// Server-wide settings
     pub server: ServerSettings,
@@ -74,6 +75,10 @@ pub struct ServerConfig {
     /// Logging configuration
     #[serde(default)]
     pub logging: LoggingConfig,
+
+    /// Metrics configuration
+    #[serde(default)]
+    pub metrics: MetricsConfig,
 
     /// Network and connection settings
     #[serde(default)]
@@ -176,6 +181,26 @@ pub struct LoggingConfig {
     /// Enable access logging
     #[serde(default = "default_true")]
     pub access_log: bool,
+}
+
+/// Metrics configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsConfig {
+    /// Enable metrics collection
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Metrics endpoint path
+    #[serde(default = "default_metrics_endpoint")]
+    pub endpoint: String,
+
+    /// Metrics listening address (if different from main server)
+    #[serde(default)]
+    pub bind_address: Option<IpAddr>,
+
+    /// Metrics listening port (if different from main server)
+    #[serde(default)]
+    pub port: Option<u16>,
 }
 
 /// Network and connection settings
@@ -410,6 +435,10 @@ fn default_compression_min_size() -> usize {
     1024 // 1KB
 }
 
+fn default_metrics_endpoint() -> String {
+    "/metrics".to_string()
+}
+
 fn default_true() -> bool {
     true
 }
@@ -438,6 +467,17 @@ impl Default for LoggingConfig {
             level: LogLevel::default(),
             file: None,
             access_log: default_true(),
+        }
+    }
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            endpoint: default_metrics_endpoint(),
+            bind_address: None,
+            port: None,
         }
     }
 }
