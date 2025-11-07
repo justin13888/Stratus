@@ -13,8 +13,9 @@ pub fn start_user_db_watcher(
     info!("Starting file watcher for user database: {:?}", db_path);
 
     // Clone the path for use in the watcher thread
-    let watch_path = db_path.clone();
-    let parent_dir = db_path
+    // Canonicalize the path to ensure consistent comparison with file system events
+    let watch_path = db_path.canonicalize().unwrap_or_else(|_| db_path.clone());
+    let parent_dir = watch_path
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
@@ -57,7 +58,16 @@ pub fn start_user_db_watcher(
                 // Wait for file system events
                 Some(event) = rx.recv() => {
                     // Check if this event is for our watched file
-                    let relevant = event.paths.iter().any(|p| p == &watch_path);
+                    // Canonicalize event paths for comparison (handles symlinks and relative paths)
+                    let relevant = event.paths.iter().any(|p| {
+                        // Try to canonicalize the event path, fall back to original if it fails
+                        // (file might not exist yet during atomic writes)
+                        let canonical_p = p.canonicalize().unwrap_or_else(|_| p.clone());
+
+                        // Compare canonical paths OR check if the filename matches
+                        canonical_p == watch_path ||
+                            p.file_name() == watch_path.file_name()
+                    });
 
                     if !relevant {
                         continue;
