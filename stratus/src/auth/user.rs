@@ -109,7 +109,7 @@ impl UserStore {
             return Err(eyre!(
                 "User database file not found: {:?}\n\
                  Create this file with user definitions, or see users.example.toml for format.\n\
-                 TODO: Password hash generation tool",
+                 Generate password hashes with `stratus-hashgen`",
                 path
             ));
         }
@@ -165,16 +165,10 @@ impl UserStore {
 
     /// Verify a user's password and return a User object if valid
     pub fn verify(&self, username: &str, password: &str) -> Option<User> {
-        use argon2::{Argon2, PasswordHash, PasswordVerifier};
-
         let entry = self.users.get(username)?;
 
-        // Verify password using argon2id
-        let parsed_hash = PasswordHash::new(&entry.password_hash).ok()?;
-        if Argon2::default()
-            .verify_password(password.as_bytes(), &parsed_hash)
-            .is_ok()
-        {
+        // Verify password using the shared stratus-auth library
+        if stratus_auth::verify_password(password, &entry.password_hash).ok()? {
             Some(
                 User::new(username.to_string())
                     .with_groups(entry.groups.clone())
@@ -237,18 +231,10 @@ mod tests {
 
     #[test]
     fn test_user_store() {
-        use argon2::password_hash::SaltString;
-        use argon2::{Argon2, PasswordHasher};
-
         let mut store = UserStore::new();
 
-        // Generate an argon2id hash for testing
-        let salt = SaltString::encode_b64(&[0u8; 16]).unwrap();
-        let argon2 = Argon2::default();
-        let password_hash = argon2
-            .hash_password(b"password123", &salt)
-            .unwrap()
-            .to_string();
+        // Generate an argon2id hash for testing using shared library
+        let password_hash = stratus_auth::hash_password("password123").unwrap();
 
         store.add_user(
             "alice".to_string(),

@@ -1,0 +1,15 @@
+[package]
+name = "stratus-hashgen"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "stratus-hashgen"
+path = "src/main.rs"
+
+[dependencies]
+stratus-auth = { path = "../stratus-auth" }
+clap = { version = "4.5", features = ["derive"] }
+eyre.workspace = true
+color-eyre = "0.6.5"
+rpassword = "7.3"

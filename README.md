@@ -30,18 +30,34 @@ Stratus is explicitly designed and tested for GNU/Linux distributions with POSIX
 
 ## Development
 
+This is a Rust workspace containing three crates:
+
+- `stratus` - The main HTTP server
+- `stratus-auth` - Shared authentication library (password hashing/verification)
+- `stratus-hashgen` - CLI tool for generating password hashes
+
 Prerequisites:
 
 - rustup
 
+### Generate Password Hashes
+
+To create password hashes for the users.toml file:
+
+```bash
+cargo run -p stratus-hashgen
+```
+
+See [stratus-hashgen/README.md](stratus-hashgen/README.md) for more details.
+
 ### Start Development Server
 
 1. Install some dependencies: `cargo install cargo-watch systemfd`
-2. Generate self-signed TLS certificates: `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=localhost" && chmod 644 key.pem cert.pem`
-3. Copy the example config: `cp config.example.toml config.toml`.
-4. Set up authentication (optional): `cp users.example.toml users.toml` and edit to add users, or disable auth in `config.toml`
-5. (Optional) Edit `config.toml` to customize your server settings
-6. Start development server: `systemfd --no-pid -s http::8443 -- cargo watch -x run`
+2. Generate self-signed TLS certificates: `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=localhost" && chmod 644 key.pem cert.pem && mv *.pem stratus/`
+3. Copy the example config: `cp stratus/config.example.toml stratus/config.toml`.
+4. Set up authentication (optional): `cp stratus/users.example.toml stratus/users.toml` and use `cargo run -p stratus-hashgen` to generate password hashes, or disable auth in `stratus/config.toml`
+5. (Optional) Edit `stratus/config.toml` to customize your server settings
+6. Start development server: `cd stratus && systemfd --no-pid -s http::8443 -- cargo watch -x run`
 
 Test with curl:
 
@@ -84,7 +100,12 @@ port = 9090
 
 Stratus supports HTTP Basic Authentication with argon2id password hashing. It also supports auth methods like JWT/Bearer tokens with OpenID Connect.
 
-See [docs/authentication.md](docs/authentication.md) for details.
+Generate password hashes with the `stratus-hashgen` CLI tool:
+```bash
+cargo run -p stratus-hashgen
+```
+
+See [stratus/docs/authentication.md](stratus/docs/authentication.md) for details.
 
 ## Other Technologies for the Curious
 

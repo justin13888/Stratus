@@ -118,16 +118,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_basic_auth_success() {
-        use argon2::password_hash::SaltString;
-        use argon2::{Argon2, PasswordHasher};
-
         let mut store = UserStore::new();
-        let salt = SaltString::encode_b64(&[0u8; 16]).unwrap();
-        let argon2 = Argon2::default();
-        let password_hash = argon2
-            .hash_password(b"secret123", &salt)
-            .unwrap()
-            .to_string();
+        let password_hash = stratus_auth::hash_password("secret123").unwrap();
         store.add_user(
             "alice".to_string(),
             password_hash,
@@ -156,16 +148,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_basic_auth_invalid_password() {
-        use argon2::password_hash::SaltString;
-        use argon2::{Argon2, PasswordHasher};
-
         let mut store = UserStore::new();
-        let salt = SaltString::encode_b64(&[0u8; 16]).unwrap();
-        let argon2 = Argon2::default();
-        let password_hash = argon2
-            .hash_password(b"secret123", &salt)
-            .unwrap()
-            .to_string();
+        let password_hash = stratus_auth::hash_password("secret123").unwrap();
         store.add_user("alice".to_string(), password_hash, vec![], HashMap::new());
 
         let provider = BasicAuthProvider::new(store);

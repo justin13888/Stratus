@@ -1,0 +1,9 @@
+[package]
+name = "stratus-auth"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+argon2.workspace = true
+eyre.workspace = true
+rand.workspace = true

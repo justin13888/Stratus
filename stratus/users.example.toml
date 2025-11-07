@@ -1,6 +1,6 @@
 # Example user database for HTTP Basic Authentication
 # Password hashes are argon2id format
-# TODO: Password hash generation tool
+# Generate password hashes with: cargo run -p stratus-hashgen
 
 # User format:
 # [users.<username>]

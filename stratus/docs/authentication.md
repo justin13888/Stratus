@@ -52,7 +52,20 @@ groups = ["group1", "group2"]  # optional user groups
 
 **Generating Password Hashes:**
 
-TODO: Password hash generation tool
+Use the `stratus-hashgen` CLI tool to generate password hashes:
+
+```bash
+# Generate hash interactively (password hidden)
+cargo run -p stratus-hashgen
+
+# Generate hash with verification
+cargo run -p stratus-hashgen --verify
+
+# Generate hash from command line argument (less secure, for testing only)
+cargo run -p stratus-hashgen mypassword123
+```
+
+The tool will output an Argon2id hash that you can copy into your `users.toml` file.
 
 **⚠️ Security Note:** Never store plain text passwords. Always use argon2id hashes.
 
