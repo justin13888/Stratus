@@ -1,7 +1,7 @@
 # ----------------------------------------------------
 # 1. Chef Stage: Install cargo-chef
 # ----------------------------------------------------
-FROM rust:1.91-trixie AS chef
+FROM docker.io/rust:1.91-trixie AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /app
 
@@ -27,7 +27,7 @@ RUN cargo build --release
 # ----------------------------------------------------
 # Runtime stage (Untouched for compatibility)
 # ----------------------------------------------------
-FROM debian:trixie-slim
+FROM docker.io/debian:trixie-slim
 
 # Create non-root user
 RUN useradd -m -u 1000 -s /bin/bash appuser
