@@ -2,6 +2,8 @@ use eyre::{Result, eyre};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, RwLock};
+use tracing::info;
 
 /// Represents an authenticated user
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -199,6 +201,57 @@ impl UserStore {
 impl Default for UserStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Thread-safe user store wrapper that supports hot-reloading
+#[derive(Debug, Clone)]
+pub struct ReloadableUserStore {
+    inner: Arc<RwLock<UserStore>>,
+}
+
+impl ReloadableUserStore {
+    /// Create a new reloadable user store from an existing UserStore
+    pub fn new(user_store: UserStore) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(user_store)),
+        }
+    }
+
+    /// Load user store from a TOML file
+    pub fn from_file(path: &Path) -> Result<Self> {
+        let user_store = UserStore::from_file(path)?;
+        Ok(Self::new(user_store))
+    }
+
+    /// Reload the user store from a file
+    pub fn reload(&self, path: &Path) -> Result<()> {
+        let new_store = UserStore::from_file(path)?;
+
+        // Acquire write lock and replace the store
+        let mut store = self.inner.write().unwrap();
+        *store = new_store;
+
+        info!("User database reloaded: {} user(s)", store.len());
+        Ok(())
+    }
+
+    /// Verify a user's password and return a User object if valid
+    pub fn verify(&self, username: &str, password: &str) -> Option<User> {
+        let store = self.inner.read().unwrap();
+        store.verify(username, password)
+    }
+
+    /// Get the number of users in the store
+    pub fn len(&self) -> usize {
+        let store = self.inner.read().unwrap();
+        store.len()
+    }
+
+    /// Check if the store is empty
+    pub fn is_empty(&self) -> bool {
+        let store = self.inner.read().unwrap();
+        store.is_empty()
     }
 }
 

@@ -2,12 +2,17 @@ mod basic;
 mod middleware;
 mod provider;
 mod user;
+mod watcher;
 
 pub use middleware::{AuthMiddleware, get_authenticated_user};
 pub use provider::AuthProvider;
-pub use user::{User, UserStore};
+use tracing::{info, warn};
+pub use user::User;
 
-use crate::config::{AuthMethod, SecurityConfig};
+use crate::{
+    auth::{basic::BasicAuthProvider, user::ReloadableUserStore},
+    config::{AuthMethod, SecurityConfig},
+};
 use eyre::Result;
 use std::sync::Arc;
 
@@ -30,23 +35,36 @@ pub fn create_auth_provider(
             })?;
 
             // Load and validate user database at startup (fail fast)
-            let user_store = UserStore::from_file(user_db_path)?;
+            let user_store = ReloadableUserStore::from_file(user_db_path)?;
 
             // Warn if user store is empty (would lock everyone out)
             if user_store.is_empty() {
-                tracing::warn!(
+                warn!(
                     "User database {:?} is empty - no users will be able to authenticate!",
                     user_db_path
                 );
             } else {
-                tracing::info!(
+                info!(
                     "Loaded {} user(s) from {:?}",
                     user_store.len(),
                     user_db_path
                 );
             }
 
-            Ok(Arc::new(basic::BasicAuthProvider::new(user_store)))
+            let provider = BasicAuthProvider::new(user_store);
+
+            // Start file watcher for hot-reloading
+            let user_store_arc = provider.user_store();
+            let db_path = user_db_path.clone();
+
+            if let Err(e) = watcher::start_user_db_watcher(user_store_arc, db_path) {
+                warn!("Failed to start user database file watcher: {}", e);
+                warn!("User database will not be hot-reloaded on changes");
+            } else {
+                info!("Hot-reloading enabled for user database");
+            }
+
+            Ok(Arc::new(provider))
         }
         AuthMethod::Bearer => {
             // Placeholder for future JWT/Bearer implementation

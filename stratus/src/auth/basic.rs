@@ -1,5 +1,5 @@
 use crate::auth::provider::{AuthProvider, AuthResult};
-use crate::auth::user::UserStore;
+use crate::auth::user::ReloadableUserStore;
 use axum::http::{HeaderMap, HeaderValue};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use std::future::Future;
@@ -9,13 +9,13 @@ use tracing::debug;
 
 /// HTTP Basic Authentication provider
 pub struct BasicAuthProvider {
-    user_store: Arc<UserStore>,
+    user_store: Arc<ReloadableUserStore>,
     realm: String,
 }
 
 impl BasicAuthProvider {
     /// Create a new Basic Auth provider with the given user store
-    pub fn new(user_store: UserStore) -> Self {
+    pub fn new(user_store: ReloadableUserStore) -> Self {
         Self {
             user_store: Arc::new(user_store),
             realm: "Stratus".to_string(),
@@ -26,6 +26,11 @@ impl BasicAuthProvider {
     pub fn with_realm(mut self, realm: String) -> Self {
         self.realm = realm;
         self
+    }
+
+    /// Get a reference to the user store (for file watching)
+    pub fn user_store(&self) -> Arc<ReloadableUserStore> {
+        Arc::clone(&self.user_store)
     }
 
     /// Parse the Authorization header and extract username and password
@@ -113,7 +118,7 @@ impl AuthProvider for BasicAuthProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::user::UserStore;
+    use crate::auth::user::{ReloadableUserStore, UserStore};
     use std::collections::HashMap;
 
     #[tokio::test]
@@ -127,7 +132,7 @@ mod tests {
             HashMap::new(),
         );
 
-        let provider = BasicAuthProvider::new(store);
+        let provider = BasicAuthProvider::new(ReloadableUserStore::new(store));
 
         // Create valid Basic Auth header
         let credentials = BASE64.encode("alice:secret123");
@@ -152,7 +157,7 @@ mod tests {
         let password_hash = stratus_auth::hash_password("secret123").unwrap();
         store.add_user("alice".to_string(), password_hash, vec![], HashMap::new());
 
-        let provider = BasicAuthProvider::new(store);
+        let provider = BasicAuthProvider::new(ReloadableUserStore::new(store));
 
         // Create Basic Auth header with wrong password
         let credentials = BASE64.encode("alice:wrongpassword");
@@ -169,7 +174,7 @@ mod tests {
     #[tokio::test]
     async fn test_basic_auth_no_credentials() {
         let store = UserStore::new();
-        let provider = BasicAuthProvider::new(store);
+        let provider = BasicAuthProvider::new(ReloadableUserStore::new(store));
 
         let headers = HeaderMap::new();
         let result = provider.authenticate(&headers).await;
@@ -179,7 +184,7 @@ mod tests {
     #[tokio::test]
     async fn test_basic_auth_malformed_header() {
         let store = UserStore::new();
-        let provider = BasicAuthProvider::new(store);
+        let provider = BasicAuthProvider::new(ReloadableUserStore::new(store));
 
         let mut headers = HeaderMap::new();
         headers.insert(

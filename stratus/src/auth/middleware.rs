@@ -98,7 +98,7 @@ pub fn get_authenticated_user(request: &Request) -> Option<&User> {
 mod tests {
     use super::*;
     use crate::auth::basic::BasicAuthProvider;
-    use crate::auth::user::UserStore;
+    use crate::auth::user::{ReloadableUserStore, UserStore};
     use axum::{
         Router, body::Body, http::StatusCode, middleware, response::IntoResponse, routing::get,
     };
@@ -120,7 +120,8 @@ mod tests {
         let password_hash = stratus_auth::hash_password("secret").unwrap();
         store.add_user("alice".to_string(), password_hash, vec![], HashMap::new());
 
-        let provider: Arc<dyn AuthProvider + Send + Sync> = Arc::new(BasicAuthProvider::new(store));
+        let provider: Arc<dyn AuthProvider + Send + Sync> =
+            Arc::new(BasicAuthProvider::new(ReloadableUserStore::new(store)));
         let auth_middleware = AuthMiddleware::new(provider);
 
         let app = Router::new()
@@ -144,7 +145,8 @@ mod tests {
     #[tokio::test]
     async fn test_auth_middleware_no_credentials() {
         let store = UserStore::new();
-        let provider: Arc<dyn AuthProvider + Send + Sync> = Arc::new(BasicAuthProvider::new(store));
+        let provider: Arc<dyn AuthProvider + Send + Sync> =
+            Arc::new(BasicAuthProvider::new(ReloadableUserStore::new(store)));
         let auth_middleware = AuthMiddleware::new(provider);
 
         let app = Router::new()
@@ -175,7 +177,8 @@ mod tests {
         let password_hash = stratus_auth::hash_password("secret").unwrap();
         store.add_user("alice".to_string(), password_hash, vec![], HashMap::new());
 
-        let provider: Arc<dyn AuthProvider + Send + Sync> = Arc::new(BasicAuthProvider::new(store));
+        let provider: Arc<dyn AuthProvider + Send + Sync> =
+            Arc::new(BasicAuthProvider::new(ReloadableUserStore::new(store)));
         let auth_middleware = AuthMiddleware::new(provider);
 
         let app = Router::new()

@@ -19,7 +19,7 @@ use tower_http::{
     compression::CompressionLayer, cors::CorsLayer, decompression::RequestDecompressionLayer,
     limit::RequestBodyLimitLayer,
 };
-use tracing::info;
+use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 mod auth;
@@ -142,7 +142,7 @@ async fn main() -> Result<()> {
                 Some(handle)
             }
             Err(e) => {
-                tracing::warn!("Failed to initialize metrics exporter: {}", e);
+                warn!("Failed to initialize metrics exporter: {}", e);
                 None
             }
         }
@@ -212,7 +212,7 @@ async fn main() -> Result<()> {
             let listener = match tokio::net::TcpListener::bind(metrics_addr).await {
                 Ok(l) => l,
                 Err(e) => {
-                    tracing::error!("Failed to bind metrics server to {}: {}", metrics_addr, e);
+                    error!("Failed to bind metrics server to {}: {}", metrics_addr, e);
                     return;
                 }
             };
@@ -220,7 +220,7 @@ async fn main() -> Result<()> {
             info!("Metrics server listening on {}", metrics_addr);
 
             if let Err(e) = axum::serve(listener, metrics_router).await {
-                tracing::error!("Metrics server error: {}", e);
+                error!("Metrics server error: {}", e);
             }
         });
     } else if metrics_config.enabled && metrics_handle.is_some() {
