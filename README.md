@@ -55,36 +55,14 @@ podman compose up
 
 ## Monitoring
 
-Stratus includes built-in Prometheus metrics support. See [docs/METRICS.md](docs/METRICS.md) for detailed documentation.
+Stratus includes built-in Prometheus metrics support. Enable metrics in configuration file `config.toml` under the `[metrics]` section.
 
-### Quick Start - Metrics on Main Server
+Example:
 
-1. Enable metrics in `config.toml`:
-   ```toml
-   [metrics]
-   enabled = true
-   endpoint = "/metrics"
-   ```
-2. Access metrics at `https://localhost:8443/metrics`
-
-### Quick Start - Separate Metrics Server
-
-For isolating metrics traffic, you can specify a different bind address or port (or both):
-
-1. Configure separate server in `config.toml`:
-   ```toml
-   [metrics]
-   enabled = true
-   endpoint = "/metrics"
-   # Specify different address, port, or both
-   bind_address = "127.0.0.1"  # Optional: defaults to main server's address
-   port = 9090                  # Optional: defaults to main server's port
-   ```
-2. Access metrics at `http://localhost:9090/metrics` (plain HTTP, no TLS)
-
-**Note:** If you specify the same bind_address and port as the main server, metrics will be served on the main server instead of spawning a separate server.
-
-For testing the metrics endpoint, run:
-```bash
-./test_metrics.sh
+```toml
+[metrics]
+enabled = true
+endpoint = "/metrics"
+bind_address = "127.0.0.1"
+port = 9090
 ```
