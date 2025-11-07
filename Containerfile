@@ -1,31 +1,37 @@
-# Build stage
-FROM rust:1.91-trixie AS builder
-
-# # Install build dependencies
-# RUN apt-get update && \
-#     apt-get install -y --no-install-recommends \
-#     dephere
-#     && rm -rf /var/lib/apt/lists/*
-
-# Create workspace structure
+# ----------------------------------------------------
+# 1. Chef Stage: Install cargo-chef
+# ----------------------------------------------------
+FROM rust:1.91-trixie AS chef
+RUN cargo install cargo-chef --locked
 WORKDIR /app
 
-# Copy source code
+# ----------------------------------------------------
+# 2. Planner Stage: Create the Dependency Recipe
+# ----------------------------------------------------
+FROM chef AS planner
 COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
 
-# Build for release with optimizations
+# ----------------------------------------------------
+# 3. Builder Stage (Modified for Caching)
+# ----------------------------------------------------
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# Build application
+COPY . .
 RUN cargo build --release
 
-# Runtime stage
-FROM debian:bookworm-slim
-
-# Install ca-certificates for TLS
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates curl && \
-    rm -rf /var/lib/apt/lists/*
+# ----------------------------------------------------
+# Runtime stage (Untouched for compatibility)
+# ----------------------------------------------------
+FROM debian:trixie-slim
 
 # Create non-root user
 RUN useradd -m -u 1000 -s /bin/bash appuser
+USER appuser
 
 # Set working directory
 WORKDIR /app
@@ -33,19 +39,11 @@ WORKDIR /app
 # Copy the binary from builder
 COPY --from=builder /app/target/release/stratus /usr/local/bin/stratus
 
-# Switch to non-root user
-USER appuser
-
 # Default port (can be overridden)
 ENV PORT=443
 
-# Expose ports (this is documentation only, actual port binding happens at runtime)
+# Expose ports
 EXPOSE ${PORT}/tcp
-
-# Healthcheck using curl with PORT environment variable
-# The sh -c wrapper allows environment variable expansion
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD sh -c 'curl -f -k https://localhost:${PORT}/health || exit 1'
 
 # Run the binary
 CMD ["stratus"]
