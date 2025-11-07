@@ -3,7 +3,6 @@ services:
     build:
       context: .
       dockerfile: Containerfile
-    image: localhost/justin13888/stratus:latest
     environment:
       # Override default port if needed
       PORT: 443
