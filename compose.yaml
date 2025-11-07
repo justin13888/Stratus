@@ -5,12 +5,12 @@ services:
       dockerfile: Containerfile
     environment:
       # Override default port if needed
-      PORT: 443
+      PORT: 8443
     ports:
       # Map host port to container port
       # Format: "host_port:container_port"
       # Example: "8443:8443" for port 8443, "443:443" for standard HTTPS
-      - "443:443"
+      - "8443:8443"
     volumes:
       # Mount your config file to customize the server port
       # The port in config.toml should match the PORT env variable

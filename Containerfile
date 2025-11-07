@@ -40,7 +40,7 @@ WORKDIR /app
 COPY --from=builder /app/target/release/stratus /usr/local/bin/stratus
 
 # Default port (can be overridden)
-ENV PORT=443
+ENV PORT=8443
 
 # Expose ports
 EXPOSE ${PORT}/tcp
