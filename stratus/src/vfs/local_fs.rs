@@ -5,6 +5,7 @@ use std::pin::Pin;
 use tokio::fs;
 use tokio::io::{AsyncRead, AsyncSeek};
 use tokio_stream::wrappers::ReadDirStream;
+use tracing::debug;
 
 use super::{Vfs, VfsEntry, VfsFile, VfsMetadata};
 
@@ -118,17 +119,23 @@ impl Vfs for LocalFs {
                                         });
                                     }
                                     Err(e) => {
+                                        debug!(
+                                            "Failed to get metadata for entry '{}' in {:?}: {}",
+                                            name, path, e
+                                        );
                                         yield Err(e);
                                     }
                                 }
                             }
                             Err(e) => {
+                                debug!("Failed to read directory entry in {:?}: {}", path, e);
                                 yield Err(e);
                             }
                         }
                     }
                 }
                 Err(e) => {
+                    debug!("Failed to open directory {:?}: {}", path, e);
                     yield Err(e);
                 }
             }

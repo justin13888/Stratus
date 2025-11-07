@@ -5,7 +5,7 @@ use axum::{
 use eyre::Result;
 use futures::StreamExt;
 use std::path::Path;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use super::html::generate_directory_html;
 use crate::config::ShareConfig;
@@ -114,7 +114,14 @@ async fn read_directory_entries<V: Vfs>(
 
     // Process entries from the stream
     while let Some(entry_result) = vfs_entries.next().await {
-        let entry = entry_result?;
+        let entry = match entry_result {
+            Ok(e) => e,
+            Err(e) => {
+                // Log individual entry errors but continue processing others
+                debug!("Error reading directory entry in {:?}: {}", dir_path, e);
+                continue; // Skip this entry and continue with others
+            }
+        };
         let name = entry.name;
 
         // Skip hidden files if configured

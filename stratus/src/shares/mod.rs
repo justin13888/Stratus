@@ -89,8 +89,12 @@ pub async fn serve_share<V: Vfs>(
     // First check: does the requested path exist?
     let metadata = match state.vfs.metadata(&requested_path).await {
         Ok(m) => m,
-        Err(_) => {
-            // Path doesn't exist
+        Err(e) => {
+            // Path doesn't exist or error accessing it
+            warn!(
+                "Failed to get metadata for share '{}' path {:?}: {}",
+                share_name, requested_path, e
+            );
             crate::metrics::record_share_request(share_name, 0, false);
             return (StatusCode::NOT_FOUND, "File or directory not found").into_response();
         }
@@ -132,8 +136,12 @@ pub async fn serve_share<V: Vfs>(
     // Now get the canonical path for actual file operations
     let canonical_requested_path = match state.vfs.canonicalize(&requested_path).await {
         Ok(p) => p,
-        Err(_) => {
+        Err(e) => {
             // Shouldn't happen since we already checked metadata, but be safe
+            warn!(
+                "Failed to canonicalize share '{}' path {:?}: {}",
+                share_name, requested_path, e
+            );
             crate::metrics::record_share_request(share_name, 0, false);
             return (StatusCode::NOT_FOUND, "File or directory not found").into_response();
         }
