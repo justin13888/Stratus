@@ -13,10 +13,12 @@ bind_address = "127.0.0.1"
 # Server port ✅
 port = 8443
 
-# Server name/identifier ⚠️ (loaded but not used in responses yet)
+# Server name/identifier ✅ (used in Server response header)
 server_name = "Stratus"
 
-# Working directory for the server (optional) ⚠️ (loaded but not applied)
+# Working directory for the server (optional) ✅ (used for cache and server-generated files)
+# Does NOT change the process's working directory - only used as base path for server data
+# Defaults to current directory if not specified
 # workdir = "/var/lib/stratus"
 
 [tls]
@@ -53,7 +55,9 @@ level = "info"
 # access_log = true
 
 [network]
-# Maximum number of concurrent connections ⚠️ (loaded but enforcement not yet implemented)
+# Maximum number of concurrent requests ✅ (enforced via tower ConcurrencyLimitLayer)
+# Note: This limits concurrent requests, not TCP connections. In HTTP/2, a single connection
+# can multiplex many requests, so this is generally more useful than limiting raw connections.
 # max_connections = 10000
 
 # Connection timeout (seconds) ✅ (used for graceful shutdown timeout)

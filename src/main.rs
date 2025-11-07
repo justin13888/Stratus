@@ -6,13 +6,14 @@ use std::time::Duration;
 
 use axum::error_handling::HandleErrorLayer;
 use axum::http::StatusCode;
+use axum::response::Response;
 use axum::{Router, routing::get};
 use axum_server::{Handle, tls_rustls::RustlsConfig};
 use eyre::{Result, eyre};
 use listenfd::ListenFd;
 use std::net::TcpListener;
-use tokio::sync::Semaphore;
 use tower::ServiceBuilder;
+use tower::limit::ConcurrencyLimitLayer;
 use tower::timeout::TimeoutLayer;
 use tower_http::{
     compression::CompressionLayer, cors::CorsLayer, decompression::RequestDecompressionLayer,
@@ -142,7 +143,13 @@ async fn main() -> Result<()> {
         .map_err(|e| eyre!("Failed to load TLS certificates: {}", e))?;
 
     // Build the application with configured middleware
-    let app = build_app(&security_config, &network_config, &shares, workdir)?;
+    let app = build_app(
+        &server_settings,
+        &security_config,
+        &network_config,
+        &shares,
+        workdir,
+    )?;
 
     // Determine bind address
     let bind_addr = SocketAddr::from((server_settings.bind_address, server_settings.port));
@@ -156,30 +163,69 @@ async fn main() -> Result<()> {
             listener
         }
         None => {
-            // Configure TCP socket options
-            let listener = TcpListener::bind(bind_addr)
+            // Use socket2 for fine-grained TCP socket configuration
+            use socket2::{Domain, Protocol, Socket, Type};
+
+            let socket = Socket::new(
+                Domain::for_address(bind_addr),
+                Type::STREAM,
+                Some(Protocol::TCP),
+            )
+            .map_err(|e| eyre!("Failed to create socket: {}", e))?;
+
+            // Set TCP_NODELAY if configured
+            if network_config.tcp_nodelay {
+                socket
+                    .set_nodelay(true)
+                    .map_err(|e| eyre!("Failed to set TCP_NODELAY: {}", e))?;
+                info!("TCP_NODELAY enabled");
+            }
+
+            // Set TCP keepalive if configured
+            if network_config.tcp_keepalive {
+                use socket2::TcpKeepalive;
+                let keepalive = TcpKeepalive::new()
+                    .with_time(Duration::from_secs(network_config.tcp_keepalive_interval));
+                socket
+                    .set_tcp_keepalive(&keepalive)
+                    .map_err(|e| eyre!("Failed to set TCP keepalive: {}", e))?;
+                info!(
+                    "TCP keepalive enabled with interval: {}s",
+                    network_config.tcp_keepalive_interval
+                );
+            }
+
+            // Set SO_REUSEADDR for easier restarts
+            socket
+                .set_reuse_address(true)
+                .map_err(|e| eyre!("Failed to set SO_REUSEADDR: {}", e))?;
+
+            // Bind the socket
+            socket
+                .bind(&bind_addr.into())
                 .map_err(|e| eyre!("Failed to bind to {}: {}", bind_addr, e))?;
 
-            // Note: TCP socket options (TCP_NODELAY, keepalive, backlog) need to be set at a lower level
-            // std::net::TcpListener doesn't expose these methods directly
-            // For production use, consider using the socket2 crate for fine-grained control
-            // TODO: Use socket2 crate to set tcp_nodelay, tcp_keepalive, and listen_backlog before bind
+            // Listen with configured backlog
+            socket
+                .listen(network_config.listen_backlog as i32)
+                .map_err(|e| eyre!("Failed to listen: {}", e))?;
 
-            info!("Binding to {}", bind_addr);
-            listener
+            info!(
+                "Binding to {} with listen backlog: {}",
+                bind_addr, network_config.listen_backlog
+            );
+
+            // Set non-blocking mode
+            socket
+                .set_nonblocking(true)
+                .map_err(|e| eyre!("Failed to set non-blocking: {}", e))?;
+
+            // Convert socket2::Socket to std::net::TcpListener
+            TcpListener::from(socket)
         }
     };
 
     info!("Server listening on {}", listener.local_addr().unwrap());
-
-    // TODO: Implement per-connection semaphore limiting
-    // Currently axum-server doesn't provide hooks for per-connection middleware
-    // Would need to wrap the make_service with custom connection tracking
-    let _connection_limit = Arc::new(Semaphore::new(network_config.max_connections));
-    info!(
-        "Max connections configured: {} (enforcement not yet implemented)",
-        network_config.max_connections
-    );
 
     // Create shutdown signal handler
     let handle = Handle::new();
@@ -239,6 +285,7 @@ async fn main() -> Result<()> {
 }
 
 fn build_app(
+    server_settings: &config::ServerSettings,
     security_config: &config::SecurityConfig,
     network_config: &config::NetworkConfig,
     shares: &HashMap<String, config::ShareConfig>,
@@ -299,13 +346,34 @@ fn build_app(
     // Add compression if enabled with smart predicates
     if security_config.compression_enabled {
         use tower_http::compression::predicate::SizeAbove;
+
+        // Enable only configured algorithms
+        let has_gzip = security_config
+            .compression_algorithms
+            .contains(&config::CompressionAlgorithm::Gzip);
+        let has_br = security_config
+            .compression_algorithms
+            .contains(&config::CompressionAlgorithm::Br);
+        let has_zstd = security_config
+            .compression_algorithms
+            .contains(&config::CompressionAlgorithm::Zstd);
+
+        // Configure compression layer with specific algorithms
+        let compression = CompressionLayer::new()
+            .gzip(has_gzip)
+            .br(has_br)
+            .zstd(has_zstd);
+
         // Only compress responses larger than the configured minimum size
-        let min_size = (security_config.compression_min_size * 1024) as u16; // Convert KB to bytes
+        // Note: SizeAbove expects a u16, so we clamp to u16::MAX to avoid overflow
+        let min_size_bytes = security_config.compression_min_size * 1024; // Convert KB to bytes
+        let min_size = min_size_bytes.min(u16::MAX as usize) as u16;
         let predicate = SizeAbove::new(min_size);
-        app = app.layer(CompressionLayer::new().compress_when(predicate));
+
+        app = app.layer(compression.compress_when(predicate));
         info!(
-            "Compression enabled with min size: {} KB",
-            security_config.compression_min_size
+            "Compression enabled with algorithms: {:?}, min size: {} KB",
+            security_config.compression_algorithms, security_config.compression_min_size
         );
     }
 
@@ -326,9 +394,26 @@ fn build_app(
             // Allow all origins
             CorsLayer::permissive()
         } else {
-            // TODO: Configure specific allowed origins from cors_allowed_origins
-            // tower-http CorsLayer::new() requires proper origin parsing
-            CorsLayer::permissive() // Using permissive for now
+            // Configure specific allowed origins
+            use tower_http::cors::AllowOrigin;
+
+            let origins: Vec<_> = security_config
+                .cors_allowed_origins
+                .iter()
+                .filter_map(|origin| origin.parse::<axum::http::HeaderValue>().ok())
+                .collect();
+
+            if origins.is_empty() {
+                // If parsing failed for all origins, fall back to permissive
+                info!("Failed to parse CORS origins, using permissive mode");
+                CorsLayer::permissive()
+            } else {
+                info!(
+                    "CORS configured with specific origins: {:?}",
+                    security_config.cors_allowed_origins
+                );
+                CorsLayer::new().allow_origin(AllowOrigin::list(origins))
+            }
         };
         app = app.layer(cors);
     }
@@ -337,8 +422,32 @@ fn build_app(
     // TODO: Implement rate limiting if security_config.rate_limiting_enabled
     // TODO: Implement access logging if logging_config.access_log is enabled
 
+    // Add Server header middleware
+    let server_name = Arc::new(server_settings.server_name.clone());
+    app = app.layer(axum::middleware::map_response(
+        move |mut response: Response| {
+            let server_name = Arc::clone(&server_name);
+            async move {
+                response.headers_mut().insert(
+                    axum::http::header::SERVER,
+                    axum::http::HeaderValue::from_str(&server_name)
+                        .unwrap_or_else(|_| axum::http::HeaderValue::from_static("Stratus")),
+                );
+                response
+            }
+        },
+    ));
+
+    // Apply global connection limit
+    app = app.layer(ConcurrencyLimitLayer::new(network_config.max_connections));
+    info!(
+        "Max concurrent requests limit: {}",
+        network_config.max_connections
+    );
+
     Ok(app)
 }
+
 // TODO: Add unit tests to verify share endpoints expose compression headers &&
 
 async fn health_handler() -> StatusCode {
