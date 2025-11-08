@@ -1,23 +1,24 @@
 # ----------------------------------------------------
-# 1. Chef Stage: Install cargo-chef
+# Chef: Setup chef image
 # ----------------------------------------------------
-FROM docker.io/rust:1.91-trixie AS chef
+FROM docker.io/rust:1.91-slim-trixie AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /app
 
 # ----------------------------------------------------
-# 2. Planner Stage: Create the Dependency Recipe
+# Planner: Create dependency recipe
 # ----------------------------------------------------
 FROM chef AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 # ----------------------------------------------------
-# 3. Builder Stage (Modified for Caching)
+# Builder: Build dependencies and application
 # ----------------------------------------------------
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 
+# Build dependencies
 RUN cargo chef cook --release --recipe-path recipe.json
 
 # Build application
@@ -25,7 +26,7 @@ COPY . .
 RUN cargo build --release
 
 # ----------------------------------------------------
-# Runtime stage (Untouched for compatibility)
+# Runtime stage
 # ----------------------------------------------------
 FROM docker.io/debian:trixie-slim
 
@@ -38,12 +39,6 @@ WORKDIR /app
 
 # Copy the binary from builder
 COPY --from=builder /app/target/release/stratus /usr/local/bin/stratus
-
-# Default port (can be overridden)
-ENV PORT=8443
-
-# Expose ports
-EXPOSE ${PORT}/tcp
 
 # Run the binary
 CMD ["stratus"]

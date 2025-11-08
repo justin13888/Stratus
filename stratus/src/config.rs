@@ -1,8 +1,9 @@
-use eyre::{Result, eyre};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
+
+use crate::errors::ConfigError;
 
 /// TLS version
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -35,6 +36,31 @@ pub enum LogLevel {
     Info,
     Warn,
     Error,
+}
+
+impl LogLevel {
+    /// Returns all log level variants
+    pub const fn all() -> [LogLevel; 5] {
+        [
+            LogLevel::Trace,
+            LogLevel::Debug,
+            LogLevel::Info,
+            LogLevel::Warn,
+            LogLevel::Error,
+        ]
+    }
+}
+
+impl std::fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LogLevel::Trace => write!(f, "trace"),
+            LogLevel::Debug => write!(f, "debug"),
+            LogLevel::Info => write!(f, "info"),
+            LogLevel::Warn => write!(f, "warn"),
+            LogLevel::Error => write!(f, "error"),
+        }
+    }
 }
 
 /// Authentication method
@@ -523,53 +549,53 @@ impl Default for SecurityConfig {
 
 impl ServerConfig {
     /// Load configuration from a TOML file
-    pub fn from_file(path: impl Into<PathBuf>) -> Result<Self> {
+    pub fn from_file(path: impl Into<PathBuf>) -> Result<Self, ConfigError> {
         let path = path.into();
-        let contents = std::fs::read_to_string(&path)
-            .map_err(|e| eyre!("Failed to read config file {:?}: {}", path, e))?;
 
-        let config: ServerConfig =
-            toml::from_str(&contents).map_err(|e| eyre!("Failed to parse config file: {}", e))?;
+        if !path.exists() {
+            return Err(ConfigError::FileNotFound(path));
+        }
+
+        let contents = std::fs::read_to_string(&path)
+            .map_err(|e| ConfigError::ParseError(format!("Failed to read file: {}", e)))?;
+
+        let config: ServerConfig = toml::from_str(&contents)
+            .map_err(|e| ConfigError::ParseError(format!("TOML syntax error: {}", e)))?;
 
         config.validate()?;
         Ok(config)
     }
 
     /// Validate the configuration
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<(), ConfigError> {
         // Validate TLS files exist
         if !self.tls.cert_file.exists() {
-            return Err(eyre!(
-                "TLS certificate file not found: {:?}",
-                self.tls.cert_file
-            ));
+            return Err(ConfigError::CertNotFound(self.tls.cert_file.clone()));
         }
         if !self.tls.key_file.exists() {
-            return Err(eyre!("TLS key file not found: {:?}", self.tls.key_file));
+            return Err(ConfigError::KeyNotFound(self.tls.key_file.clone()));
         }
 
         // Validate share paths exist
         for (name, share) in &self.shares {
             if !share.path.exists() {
-                return Err(eyre!(
-                    "Share '{}' path does not exist: {:?}",
-                    name,
-                    share.path
-                ));
+                return Err(ConfigError::SharePathNotFound {
+                    share: name.clone(),
+                    path: share.path.clone(),
+                });
             }
             if !share.path.is_dir() {
-                return Err(eyre!(
-                    "Share '{}' path is not a directory: {:?}",
-                    name,
-                    share.path
-                ));
+                return Err(ConfigError::SharePathNotDirectory {
+                    share: name.clone(),
+                    path: share.path.clone(),
+                });
             }
         }
 
         // Validate HTTP/2 settings
         if self.http2.max_frame_size < 16384 || self.http2.max_frame_size > 16777215 {
-            return Err(eyre!(
-                "HTTP/2 max_frame_size must be between 16384 and 16777215"
+            return Err(ConfigError::InvalidHttp2Config(
+                "max_frame_size must be between 16384 and 16777215".to_string(),
             ));
         }
 

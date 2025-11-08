@@ -1,9 +1,10 @@
-use eyre::{Result, eyre};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 use tracing::info;
+
+use crate::errors::AuthError;
 
 /// Represents an authenticated user
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,25 +106,14 @@ impl UserStore {
     /// password_hash = "$argon2id$..."
     /// groups = ["users"]
     /// ```
-    pub fn from_file(path: &Path) -> Result<Self> {
+    pub fn from_file(path: &Path) -> Result<Self, AuthError> {
         // Check if file exists first for better error messages
         if !path.exists() {
-            return Err(eyre!(
-                "User database file not found: {:?}\n\
-                 Create this file with user definitions, or see users.example.toml for format.\n\
-                 Generate password hashes with `stratus-hashgen`",
-                path
-            ));
+            return Err(AuthError::UserDbNotFound(path.to_path_buf()));
         }
 
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            eyre!(
-                "Failed to read user database file {:?}: {}\n\
-                 Check file permissions.",
-                path,
-                e
-            )
-        })?;
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| AuthError::UserDbParseError(format!("Failed to read file: {}", e)))?;
 
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
@@ -131,17 +121,12 @@ impl UserStore {
             users: HashMap<String, UserEntry>,
         }
 
-        let db: UserDb = toml::from_str(&content).map_err(|e| {
-            eyre!(
-                "Failed to parse user database {:?}: {}\n\
-                 Check TOML syntax. Expected format:\n\
-                 [users.username]\n\
-                 password_hash = \"$argon2id$...\"\n\
-                 groups = [\"group1\"]",
-                path,
-                e
-            )
-        })?;
+        let db: UserDb = toml::from_str(&content)
+            .map_err(|e| AuthError::UserDbParseError(format!("TOML parse error: {}", e)))?;
+
+        if db.users.is_empty() {
+            return Err(AuthError::EmptyUserDatabase);
+        }
 
         Ok(Self { users: db.users })
     }
@@ -219,13 +204,13 @@ impl ReloadableUserStore {
     }
 
     /// Load user store from a TOML file
-    pub fn from_file(path: &Path) -> Result<Self> {
+    pub fn from_file(path: &Path) -> Result<Self, AuthError> {
         let user_store = UserStore::from_file(path)?;
         Ok(Self::new(user_store))
     }
 
     /// Reload the user store from a file
-    pub fn reload(&self, path: &Path) -> Result<()> {
+    pub fn reload(&self, path: &Path) -> Result<(), AuthError> {
         let new_store = UserStore::from_file(path)?;
 
         // Acquire write lock and replace the store
@@ -315,9 +300,8 @@ mod tests {
 
         let result = UserStore::from_file(&PathBuf::from("/nonexistent/path/users.toml"));
         assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("not found"));
-        assert!(err_msg.contains("users.example.toml"));
+        let err = result.unwrap_err();
+        assert!(matches!(err, AuthError::UserDbNotFound(_)));
     }
 
     #[test]
@@ -330,8 +314,8 @@ mod tests {
 
         let result = UserStore::from_file(temp_file.path());
         assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("Failed to parse"));
+        let err = result.unwrap_err();
+        assert!(matches!(err, AuthError::UserDbParseError(_)));
     }
 
     #[test]
@@ -343,9 +327,8 @@ mod tests {
         writeln!(temp_file, "[users]").unwrap();
 
         let result = UserStore::from_file(temp_file.path());
-        assert!(result.is_ok());
-        let store = result.unwrap();
-        assert!(store.is_empty());
-        assert_eq!(store.len(), 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, AuthError::EmptyUserDatabase));
     }
 }

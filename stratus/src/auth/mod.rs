@@ -12,6 +12,7 @@ pub use user::User;
 use crate::{
     auth::{basic::BasicAuthProvider, user::ReloadableUserStore},
     config::{AuthMethod, SecurityConfig},
+    errors::AuthError,
 };
 use eyre::Result;
 use std::sync::Arc;
@@ -28,10 +29,9 @@ pub fn create_auth_provider(
         AuthMethod::Basic => {
             // Basic auth REQUIRES a user database file
             let user_db_path = security_config.user_db_file.as_ref().ok_or_else(|| {
-                eyre::eyre!(
-                    "Basic authentication enabled but 'user_db_file' not specified in config. \
-                     Please set [security] user_db_file = \"users.toml\" or disable authentication."
-                )
+                AuthError::UserDbNotFound(std::path::PathBuf::from(
+                    "users.toml (not specified in config)",
+                ))
             })?;
 
             // Load and validate user database at startup (fail fast)

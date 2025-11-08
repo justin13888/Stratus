@@ -10,8 +10,8 @@ use tracing::{debug, trace, warn};
 use directory::serve_directory_listing;
 use file::serve_file;
 
-use crate::auth::get_authenticated_user;
 use crate::vfs::Vfs;
+use crate::{auth::get_authenticated_user, errors::ShareError};
 
 mod authz;
 mod directory;
@@ -45,7 +45,8 @@ pub async fn serve_share<V: Vfs>(
         None => {
             warn!("Share '{}' not found", share_name);
             crate::metrics::record_share_request(share_name, 0, false);
-            return (StatusCode::NOT_FOUND, "Share not found").into_response();
+            let err = ShareError::NotFound(share_name.to_string());
+            return (StatusCode::NOT_FOUND, err.to_string()).into_response();
         }
     };
 
@@ -53,7 +54,8 @@ pub async fn serve_share<V: Vfs>(
     if !share_config.enabled {
         warn!("Share '{}' is disabled", share_name);
         crate::metrics::record_share_request(share_name, 0, false);
-        return (StatusCode::FORBIDDEN, "Share is disabled").into_response();
+        let err = ShareError::Disabled(share_name.to_string());
+        return (StatusCode::FORBIDDEN, err.to_string()).into_response();
     }
 
     // Authorization check: verify user has at least read access
@@ -64,7 +66,8 @@ pub async fn serve_share<V: Vfs>(
             share_name
         );
         crate::metrics::record_share_request(share_name, 0, false);
-        return (StatusCode::FORBIDDEN, "Access denied to this share").into_response();
+        let err = ShareError::AccessDenied(share_name.to_string());
+        return (StatusCode::FORBIDDEN, err.to_string()).into_response();
     } else {
         trace!(
             "User {:?} granted access to share '{}'",
@@ -130,7 +133,11 @@ pub async fn serve_share<V: Vfs>(
             requested_path, canonical_share_path
         );
         crate::metrics::record_share_request(share_name, 0, false);
-        return (StatusCode::FORBIDDEN, "Access denied").into_response();
+        let err = ShareError::PathTraversal {
+            path: requested_path.to_path_buf(),
+            base: canonical_share_path.to_path_buf(),
+        };
+        return (StatusCode::FORBIDDEN, err.to_string()).into_response();
     }
 
     // Now get the canonical path for actual file operations

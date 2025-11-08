@@ -1,3 +1,4 @@
+use crate::errors::VfsError;
 use futures::stream::{Stream, StreamExt};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -21,7 +22,7 @@ impl LocalFile {
 }
 
 impl VfsFile for LocalFile {
-    async fn size(&self) -> io::Result<u64> {
+    async fn size(&self) -> Result<u64, VfsError> {
         let metadata = self.file.metadata().await?;
         Ok(metadata.len())
     }
@@ -73,14 +74,30 @@ impl Default for LocalFs {
 impl Vfs for LocalFs {
     type File = LocalFile;
 
-    async fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
-        fs::canonicalize(path).await
+    async fn canonicalize(&self, path: &Path) -> Result<PathBuf, VfsError> {
+        fs::canonicalize(path).await.map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                VfsError::NotFound(path.to_path_buf())
+            } else if e.kind() == io::ErrorKind::PermissionDenied {
+                VfsError::PermissionDenied(path.to_path_buf())
+            } else {
+                VfsError::IoError(e)
+            }
+        })
     }
 
-    async fn metadata(&self, path: &Path) -> io::Result<VfsMetadata> {
+    async fn metadata(&self, path: &Path) -> Result<VfsMetadata, VfsError> {
         // Use symlink_metadata to NOT follow symlinks
         // This is crucial for security - we need to detect symlinks before following them
-        let metadata = fs::symlink_metadata(path).await?;
+        let metadata = fs::symlink_metadata(path).await.map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                VfsError::NotFound(path.to_path_buf())
+            } else if e.kind() == io::ErrorKind::PermissionDenied {
+                VfsError::PermissionDenied(path.to_path_buf())
+            } else {
+                VfsError::IoError(e)
+            }
+        })?;
         Ok(VfsMetadata {
             is_dir: metadata.is_dir(),
             is_file: metadata.is_file(),
@@ -93,7 +110,7 @@ impl Vfs for LocalFs {
     fn read_dir(
         &self,
         path: &Path,
-    ) -> Pin<Box<dyn Stream<Item = io::Result<VfsEntry>> + Send + '_>> {
+    ) -> Pin<Box<dyn Stream<Item = Result<VfsEntry, VfsError>> + Send + '_>> {
         let path = path.to_path_buf();
         Box::pin(async_stream::stream! {
             match fs::read_dir(&path).await {
@@ -123,40 +140,68 @@ impl Vfs for LocalFs {
                                             "Failed to get metadata for entry '{}' in {:?}: {}",
                                             name, path, e
                                         );
-                                        yield Err(e);
+                                        yield Err(VfsError::IoError(e));
                                     }
                                 }
                             }
                             Err(e) => {
                                 debug!("Failed to read directory entry in {:?}: {}", path, e);
-                                yield Err(e);
+                                yield Err(VfsError::IoError(e));
                             }
                         }
                     }
                 }
                 Err(e) => {
                     debug!("Failed to open directory {:?}: {}", path, e);
-                    yield Err(e);
+                    yield Err(VfsError::IoError(e));
                 }
             }
         })
     }
 
-    async fn open(&self, path: &Path) -> io::Result<Self::File> {
-        let file = fs::File::open(path).await?;
+    async fn open(&self, path: &Path) -> Result<Self::File, VfsError> {
+        let file = fs::File::open(path).await.map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                VfsError::NotFound(path.to_path_buf())
+            } else if e.kind() == io::ErrorKind::PermissionDenied {
+                VfsError::PermissionDenied(path.to_path_buf())
+            } else {
+                VfsError::IoError(e)
+            }
+        })?;
         Ok(LocalFile::new(file))
     }
 
-    async fn create_dir_all(&self, path: &Path) -> io::Result<()> {
-        fs::create_dir_all(path).await
+    async fn create_dir_all(&self, path: &Path) -> Result<(), VfsError> {
+        fs::create_dir_all(path).await.map_err(|e| {
+            if e.kind() == io::ErrorKind::PermissionDenied {
+                VfsError::PermissionDenied(path.to_path_buf())
+            } else {
+                VfsError::IoError(e)
+            }
+        })
     }
 
-    async fn write(&self, path: &Path, contents: &[u8]) -> io::Result<()> {
-        fs::write(path, contents).await
+    async fn write(&self, path: &Path, contents: &[u8]) -> Result<(), VfsError> {
+        fs::write(path, contents).await.map_err(|e| {
+            if e.kind() == io::ErrorKind::PermissionDenied {
+                VfsError::PermissionDenied(path.to_path_buf())
+            } else {
+                VfsError::IoError(e)
+            }
+        })
     }
 
-    async fn read_to_string(&self, path: &Path) -> io::Result<String> {
-        fs::read_to_string(path).await
+    async fn read_to_string(&self, path: &Path) -> Result<String, VfsError> {
+        fs::read_to_string(path).await.map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                VfsError::NotFound(path.to_path_buf())
+            } else if e.kind() == io::ErrorKind::PermissionDenied {
+                VfsError::PermissionDenied(path.to_path_buf())
+            } else {
+                VfsError::IoError(e)
+            }
+        })
     }
 }
 

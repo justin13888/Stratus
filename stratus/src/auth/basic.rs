@@ -1,5 +1,6 @@
 use crate::auth::provider::{AuthProvider, AuthResult};
 use crate::auth::user::ReloadableUserStore;
+use crate::errors::AuthError;
 use axum::http::{HeaderMap, HeaderValue};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use std::future::Future;
@@ -34,27 +35,40 @@ impl BasicAuthProvider {
     }
 
     /// Parse the Authorization header and extract username and password
-    fn parse_credentials(auth_header: &HeaderValue) -> Option<(String, String)> {
-        let auth_str = auth_header.to_str().ok()?;
+    fn parse_credentials(auth_header: &HeaderValue) -> Result<(String, String), AuthError> {
+        let auth_str = auth_header
+            .to_str()
+            .map_err(|_| AuthError::InvalidHeaderFormat)?;
 
         // Check if it starts with "Basic "
         if !auth_str.starts_with("Basic ") {
-            return None;
+            return Err(AuthError::InvalidHeaderFormat);
         }
 
         // Extract the base64 encoded credentials
-        let encoded = auth_str.strip_prefix("Basic ")?.trim();
+        let encoded = auth_str
+            .strip_prefix("Basic ")
+            .ok_or(AuthError::InvalidHeaderFormat)?
+            .trim();
 
         // Decode from base64
-        let decoded = BASE64.decode(encoded).ok()?;
-        let decoded_str = String::from_utf8(decoded).ok()?;
+        let decoded = BASE64
+            .decode(encoded)
+            .map_err(|_| AuthError::InvalidBase64)?;
+        let decoded_str = String::from_utf8(decoded).map_err(|_| AuthError::InvalidBase64)?;
 
         // Split on the first colon to get username and password
         let mut parts = decoded_str.splitn(2, ':');
-        let username = parts.next()?.to_string();
-        let password = parts.next()?.to_string();
+        let username = parts
+            .next()
+            .ok_or(AuthError::InvalidHeaderFormat)?
+            .to_string();
+        let password = parts
+            .next()
+            .ok_or(AuthError::InvalidHeaderFormat)?
+            .to_string();
 
-        Some((username, password))
+        Ok((username, password))
     }
 }
 
@@ -74,11 +88,24 @@ impl AuthProvider for BasicAuthProvider {
 
         // Parse credentials
         let (username, password) = match Self::parse_credentials(auth_header) {
-            Some(creds) => creds,
-            None => {
-                debug!("Failed to parse Basic Auth credentials");
+            Ok(creds) => creds,
+            Err(AuthError::InvalidHeaderFormat) => {
+                debug!("Invalid Authorization header format");
                 return Box::pin(async {
                     AuthResult::Failed("Invalid Authorization header format".to_string())
+                });
+            }
+            Err(AuthError::InvalidBase64) => {
+                debug!("Invalid base64 encoding in Authorization header");
+                return Box::pin(async {
+                    AuthResult::Failed("Invalid base64 encoding".to_string())
+                });
+            }
+            Err(e) => {
+                debug!("Unexpected error parsing credentials: {}", e);
+                let msg = e.to_string();
+                return Box::pin(async move {
+                    AuthResult::Failed(format!("Authentication error: {}", msg))
                 });
             }
         };
@@ -202,20 +229,17 @@ mod tests {
         let credentials = BASE64.encode("alice:password123");
         let header = format!("Basic {}", credentials).parse().unwrap();
         let result = BasicAuthProvider::parse_credentials(&header);
-        assert_eq!(
-            result,
-            Some(("alice".to_string(), "password123".to_string()))
-        );
+        assert_eq!(result, Ok(("alice".to_string(), "password123".to_string())));
 
         // Credentials with colon in password
         let credentials = BASE64.encode("user:pass:word");
         let header = format!("Basic {}", credentials).parse().unwrap();
         let result = BasicAuthProvider::parse_credentials(&header);
-        assert_eq!(result, Some(("user".to_string(), "pass:word".to_string())));
+        assert_eq!(result, Ok(("user".to_string(), "pass:word".to_string())));
 
         // Invalid scheme
         let header = "Bearer token123".parse().unwrap();
         let result = BasicAuthProvider::parse_credentials(&header);
-        assert_eq!(result, None);
+        assert!(matches!(result, Err(AuthError::InvalidHeaderFormat)));
     }
 }

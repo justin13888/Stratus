@@ -5,5 +5,5 @@ edition.workspace = true
 
 [dependencies]
 argon2.workspace = true
-eyre.workspace = true
 rand.workspace = true
+thiserror.workspace = true

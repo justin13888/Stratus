@@ -1,8 +1,9 @@
 pub mod backend;
 pub mod local_fs;
 
+use crate::errors::VfsError;
 use futures::stream::Stream;
-use std::io;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::time::SystemTime;
@@ -30,7 +31,7 @@ pub struct VfsEntry {
 pub trait VfsFile: AsyncRead + AsyncSeek + Unpin + Send {
     /// Get the size of the file
     #[allow(dead_code)]
-    fn size(&self) -> impl std::future::Future<Output = io::Result<u64>> + Send;
+    fn size(&self) -> impl Future<Output = Result<u64, VfsError>> + Send;
 }
 
 /// Virtual File System trait that abstracts filesystem operations
@@ -45,20 +46,14 @@ pub trait Vfs: Send + Sync + Clone + 'static {
     ///
     /// Returns an absolute path with all symlinks resolved. This is used
     /// for security checks to ensure paths don't escape their boundaries.
-    fn canonicalize(
-        &self,
-        path: &Path,
-    ) -> impl std::future::Future<Output = io::Result<PathBuf>> + Send;
+    fn canonicalize(&self, path: &Path) -> impl Future<Output = Result<PathBuf, VfsError>> + Send;
 
     /// Get metadata for a file or directory
     ///
     /// Returns metadata including type (file/dir/symlink), size, and modification time.
     /// This should use symlink_metadata to NOT follow symlinks, allowing detection
     /// of symlinks before they are resolved.
-    fn metadata(
-        &self,
-        path: &Path,
-    ) -> impl std::future::Future<Output = io::Result<VfsMetadata>> + Send;
+    fn metadata(&self, path: &Path) -> impl Future<Output = Result<VfsMetadata, VfsError>> + Send;
 
     /// Validate that a path (which may be a symlink) resolves to a location within the allowed base path
     ///
@@ -73,7 +68,7 @@ pub trait Vfs: Send + Sync + Clone + 'static {
         &self,
         path: &Path,
         base: &Path,
-    ) -> impl std::future::Future<Output = io::Result<bool>> + Send {
+    ) -> impl Future<Output = Result<bool, VfsError>> + Send {
         async move {
             // First, get metadata without following symlinks
             let metadata = self.metadata(path).await?;
@@ -103,7 +98,7 @@ pub trait Vfs: Send + Sync + Clone + 'static {
     }
 
     /// Check if a path exists
-    fn exists(&self, path: &Path) -> impl std::future::Future<Output = bool> + Send {
+    fn exists(&self, path: &Path) -> impl Future<Output = bool> + Send {
         async move { self.metadata(path).await.is_ok() }
     }
 
@@ -115,21 +110,17 @@ pub trait Vfs: Send + Sync + Clone + 'static {
     fn read_dir(
         &self,
         path: &Path,
-    ) -> Pin<Box<dyn Stream<Item = io::Result<VfsEntry>> + Send + '_>>;
+    ) -> Pin<Box<dyn Stream<Item = Result<VfsEntry, VfsError>> + Send + '_>>;
 
     /// Open a file for reading
     ///
     /// Returns a file handle that can be used for streaming reads and seeking.
-    fn open(&self, path: &Path)
-    -> impl std::future::Future<Output = io::Result<Self::File>> + Send;
+    fn open(&self, path: &Path) -> impl Future<Output = Result<Self::File, VfsError>> + Send;
 
     /// Create all parent directories for a path if they don't exist
     ///
     /// Similar to `mkdir -p` on Unix systems.
-    fn create_dir_all(
-        &self,
-        path: &Path,
-    ) -> impl std::future::Future<Output = io::Result<()>> + Send;
+    fn create_dir_all(&self, path: &Path) -> impl Future<Output = Result<(), VfsError>> + Send;
 
     /// Write data to a file, creating it if it doesn't exist
     ///
@@ -138,15 +129,12 @@ pub trait Vfs: Send + Sync + Clone + 'static {
         &self,
         path: &Path,
         contents: &[u8],
-    ) -> impl std::future::Future<Output = io::Result<()>> + Send;
+    ) -> impl Future<Output = Result<(), VfsError>> + Send;
 
     /// Read the entire contents of a file as a string
     ///
     /// Used for reading cached HTML files.
-    fn read_to_string(
-        &self,
-        path: &Path,
-    ) -> impl std::future::Future<Output = io::Result<String>> + Send;
+    fn read_to_string(&self, path: &Path) -> impl Future<Output = Result<String, VfsError>> + Send;
 
     /// Check if a path starts with another path (for security checks)
     ///

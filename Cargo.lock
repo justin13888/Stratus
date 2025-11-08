@@ -2038,6 +2038,7 @@ dependencies = [
  "socket2 0.5.10",
  "stratus-auth",
  "tempfile",
+ "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -2056,8 +2057,8 @@ name = "stratus-auth"
 version = "0.1.0"
 dependencies = [
  "argon2",
- "eyre",
  "rand 0.8.5",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

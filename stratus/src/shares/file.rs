@@ -10,6 +10,7 @@ use tokio_util::io::ReaderStream;
 use tracing::warn;
 
 use crate::config::ShareConfig;
+use crate::errors::ShareError;
 use crate::vfs::Vfs;
 
 pub async fn serve_file<V: Vfs>(
@@ -26,7 +27,8 @@ pub async fn serve_file<V: Vfs>(
         Err(e) => {
             warn!("Failed to get file metadata {:?}: {}", file_path, e);
             crate::metrics::record_file_operation("read_metadata", start.elapsed());
-            return (StatusCode::NOT_FOUND, "File not found").into_response();
+            let err = ShareError::PathNotFound(file_path.to_path_buf());
+            return (StatusCode::NOT_FOUND, err.to_string()).into_response();
         }
     };
 
@@ -64,7 +66,8 @@ pub async fn serve_file<V: Vfs>(
         Err(e) => {
             warn!("Failed to open file {:?}: {}", file_path, e);
             crate::metrics::record_file_operation("open", open_start.elapsed());
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to open file").into_response();
+            let err = ShareError::FileReadError(format!("Failed to open file: {}", e));
+            return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
         }
     };
     crate::metrics::record_file_operation("open", open_start.elapsed());
@@ -90,7 +93,8 @@ pub async fn serve_file<V: Vfs>(
             // Seek to start position
             if let Err(e) = file.seek(std::io::SeekFrom::Start(start)).await {
                 warn!("Failed to seek in file {:?}: {}", file_path, e);
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to read file").into_response();
+                let err = ShareError::FileReadError(format!("Failed to seek in file: {}", e));
+                return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
             }
 
             // Take only the requested range

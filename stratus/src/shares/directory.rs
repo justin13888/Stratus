@@ -2,13 +2,13 @@ use axum::{
     http::StatusCode,
     response::{Html, IntoResponse, Response},
 };
-use eyre::Result;
 use futures::StreamExt;
 use std::path::Path;
 use tracing::{debug, warn};
 
 use super::html::generate_directory_html;
 use crate::config::ShareConfig;
+use crate::errors::ShareError;
 use crate::vfs::Vfs;
 
 #[derive(Debug)]
@@ -95,7 +95,7 @@ async fn read_directory_entries<V: Vfs>(
     share_config: &ShareConfig,
     canonical_share_path: &Path,
     vfs: &V,
-) -> Result<Vec<DirEntry>> {
+) -> Result<Vec<DirEntry>, ShareError> {
     let mut entries = Vec::with_capacity(256); // Pre-allocate for better performance
     let mut vfs_entries = vfs.read_dir(dir_path);
 
@@ -119,7 +119,9 @@ async fn read_directory_entries<V: Vfs>(
             Err(e) => {
                 // Log individual entry errors but continue processing others
                 debug!("Error reading directory entry in {:?}: {}", dir_path, e);
-                continue; // Skip this entry and continue with others
+                return Err(ShareError::DirectoryReadError(format!(
+                    "Failed to read directory entry: {e}",
+                )));
             }
         };
         let name = entry.name;

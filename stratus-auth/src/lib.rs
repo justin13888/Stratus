@@ -5,8 +5,20 @@
 
 use argon2::password_hash::{PasswordHasher, PasswordVerifier, SaltString};
 use argon2::{Algorithm, Argon2, Params, PasswordHash, Version};
-use eyre::{Result, eyre};
 use rand::rngs::OsRng;
+
+/// Authentication errors
+#[derive(Debug, thiserror::Error)]
+pub enum AuthError {
+    #[error("Failed to hash password: {0}")]
+    HashError(String),
+
+    #[error("Invalid password hash format: {0}")]
+    InvalidHashFormat(String),
+
+    #[error("Password verification failed: {0}")]
+    VerificationError(String),
+}
 
 /// Argon2id parameters used for password hashing
 ///
@@ -46,13 +58,13 @@ pub fn get_argon2_params() -> Argon2<'static> {
 /// let hash = hash_password("my-secret-password").unwrap();
 /// println!("Password hash: {}", hash);
 /// ```
-pub fn hash_password(password: &str) -> Result<String> {
+pub fn hash_password(password: &str) -> Result<String, AuthError> {
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = get_argon2_params();
 
     let password_hash = argon2
         .hash_password(password.as_bytes(), &salt)
-        .map_err(|e| eyre!("Failed to hash password: {}", e))?
+        .map_err(|e| AuthError::HashError(e.to_string()))?
         .to_string();
 
     Ok(password_hash)
@@ -78,16 +90,16 @@ pub fn hash_password(password: &str) -> Result<String> {
 /// assert!(verify_password("my-secret-password", &hash).unwrap());
 /// assert!(!verify_password("wrong-password", &hash).unwrap());
 /// ```
-pub fn verify_password(password: &str, hash: &str) -> Result<bool> {
+pub fn verify_password(password: &str, hash: &str) -> Result<bool, AuthError> {
     let parsed_hash =
-        PasswordHash::new(hash).map_err(|e| eyre!("Invalid password hash format: {}", e))?;
+        PasswordHash::new(hash).map_err(|e| AuthError::InvalidHashFormat(e.to_string()))?;
 
     let argon2 = get_argon2_params();
 
     match argon2.verify_password(password.as_bytes(), &parsed_hash) {
         Ok(()) => Ok(true),
         Err(argon2::password_hash::Error::Password) => Ok(false),
-        Err(e) => Err(eyre!("Password verification error: {}", e)),
+        Err(e) => Err(AuthError::VerificationError(e.to_string())),
     }
 }
 
