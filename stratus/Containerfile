@@ -30,15 +30,15 @@ RUN cargo build --release
 # ----------------------------------------------------
 FROM docker.io/debian:trixie-slim
 
+# Copy the binary from builder
+COPY --from=builder /app/target/release/stratus /usr/local/bin/stratus
+
 # Create non-root user
 RUN useradd -m -u 1000 -s /bin/bash appuser
 USER appuser
 
 # Set working directory
 WORKDIR /app
-
-# Copy the binary from builder
-COPY --from=builder /app/target/release/stratus /usr/local/bin/stratus
 
 # Run the binary
 CMD ["stratus"]
