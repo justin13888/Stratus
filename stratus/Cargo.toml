@@ -7,8 +7,15 @@ edition.workspace = true
 stratus-auth = { path = "../stratus-auth" }
 
 async-stream = "0.3"
+dashmap = "6"
+governor = { version = "0.10", features = ["std", "dashmap"] }
 axum = { version = "0.8.6", features = ["http2"] }
 axum-server = { version = "0.7.2", features = ["rustls", "tls-rustls"] }
+rcgen = "0.13"
+rustls = "0.23"
+rustls-pemfile = "2"
+tokio-rustls = "0.26"
+x509-parser = "0.16"
 argon2.workspace = true
 base64 = "0.22"
 chrono = "0.4"

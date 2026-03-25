@@ -1,16 +1,24 @@
 mod basic;
 mod middleware;
+pub mod mtls;
 mod provider;
+pub mod rate_limit;
 mod user;
 mod watcher;
 
 pub use middleware::{AuthMiddleware, get_authenticated_user};
+pub use mtls::PeerCertificate;
 pub use provider::AuthProvider;
+pub use rate_limit::AuthRateLimiter;
 use tracing::{info, warn};
 pub use user::User;
 
 use crate::{
-    auth::{basic::BasicAuthProvider, user::ReloadableUserStore},
+    auth::{
+        basic::BasicAuthProvider,
+        mtls::MtlsAuthProvider,
+        user::ReloadableUserStore,
+    },
     config::{AuthMethod, SecurityConfig},
     errors::AuthError,
 };
@@ -72,9 +80,33 @@ pub fn create_auth_provider(
             eyre::bail!("Bearer token authentication not yet implemented")
         }
         AuthMethod::MutualTls => {
-            // Placeholder for future mTLS implementation
-            // TODO
-            eyre::bail!("Mutual TLS authentication not yet implemented")
+            // mTLS: TLS-layer cert verification is handled by rustls (ClientCertMode::Required).
+            // This provider maps the peer certificate's identity to a user in the database.
+            let user_db_path = security_config.user_db_file.as_ref().ok_or_else(|| {
+                AuthError::UserDbNotFound(std::path::PathBuf::from(
+                    "users.toml (not specified in config)",
+                ))
+            })?;
+
+            let user_store = ReloadableUserStore::from_file(user_db_path)?;
+
+            if user_store.is_empty() {
+                warn!(
+                    "User database {:?} is empty - no mTLS clients will be able to authenticate!",
+                    user_db_path
+                );
+            } else {
+                info!(
+                    "Loaded {} user(s) from {:?} for mTLS auth",
+                    user_store.len(),
+                    user_db_path
+                );
+            }
+
+            let provider =
+                MtlsAuthProvider::new(user_store, security_config.mtls_user_mapping);
+
+            Ok(Arc::new(provider))
         }
     }
 }

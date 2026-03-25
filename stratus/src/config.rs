@@ -73,6 +73,19 @@ pub enum AuthMethod {
     MutualTls,
 }
 
+/// mTLS user identity mapping strategy
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MtlsUserMapping {
+    /// Map certificate Common Name (CN) to username
+    #[default]
+    Cn,
+    /// Map first SAN RFC822 email to username
+    SanEmail,
+    /// Map first SAN DNS name to username
+    SanDns,
+}
+
 /// Compression algorithm
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -164,6 +177,22 @@ pub struct TlsConfig {
     /// Path to client CA certificate file (for client cert verification)
     #[serde(default)]
     pub client_ca_file: Option<PathBuf>,
+
+    /// Automatically generate a self-signed certificate if cert_file / key_file do not exist
+    #[serde(default = "default_false")]
+    pub auto_generate: bool,
+
+    /// Common Name for the auto-generated self-signed certificate
+    #[serde(default = "default_auto_generate_cn")]
+    pub auto_generate_cn: String,
+
+    /// Subject Alternative Names for the auto-generated certificate
+    #[serde(default = "default_auto_generate_san")]
+    pub auto_generate_san: Vec<String>,
+
+    /// Validity period in days for the auto-generated certificate
+    #[serde(default = "default_auto_generate_validity_days")]
+    pub auto_generate_validity_days: u32,
 }
 
 /// HTTP/2 specific configuration
@@ -294,6 +323,22 @@ pub struct SecurityConfig {
     #[serde(default)]
     pub cors_allowed_origins: Vec<String>,
 
+    /// Enable HTTP Strict Transport Security (HSTS) header
+    #[serde(default = "default_true")]
+    pub hsts_enabled: bool,
+
+    /// HSTS max-age in seconds (default: 2 years)
+    #[serde(default = "default_hsts_max_age")]
+    pub hsts_max_age: u64,
+
+    /// HSTS includeSubDomains directive
+    #[serde(default = "default_true")]
+    pub hsts_include_subdomains: bool,
+
+    /// HSTS preload directive (opt-in; requires manual submission to preload lists)
+    #[serde(default = "default_false")]
+    pub hsts_preload: bool,
+
     /// Enable rate limiting
     #[serde(default = "default_false")]
     pub rate_limiting_enabled: bool,
@@ -301,6 +346,34 @@ pub struct SecurityConfig {
     /// Rate limit: requests per minute per IP
     #[serde(default = "default_rate_limit")]
     pub rate_limit: u32,
+
+    /// Rate limit burst: extra requests allowed above the steady-state rate per IP
+    #[serde(default = "default_rate_limit_burst")]
+    pub rate_limit_burst: u32,
+
+    /// Trust X-Forwarded-For header for client IP (enable when behind a trusted reverse proxy)
+    #[serde(default = "default_false")]
+    pub trust_proxy_headers: bool,
+
+    /// Number of consecutive auth failures from an IP before triggering a lockout
+    #[serde(default = "default_auth_lockout_threshold")]
+    pub auth_lockout_threshold: u32,
+
+    /// Initial auth lockout duration in seconds
+    #[serde(default = "default_auth_lockout_duration")]
+    pub auth_lockout_duration: u64,
+
+    /// Backoff multiplier applied to the lockout duration on each successive lockout
+    #[serde(default = "default_auth_lockout_multiplier")]
+    pub auth_lockout_multiplier: f64,
+
+    /// Maximum auth lockout duration in seconds (cap for exponential backoff)
+    #[serde(default = "default_auth_lockout_max_duration")]
+    pub auth_lockout_max_duration: u64,
+
+    /// Identity mapping strategy for mTLS authentication
+    #[serde(default)]
+    pub mtls_user_mapping: MtlsUserMapping,
 
     /// Enable compression
     #[serde(default = "default_true")]
@@ -460,6 +533,42 @@ fn default_rate_limit() -> u32 {
     60
 }
 
+fn default_hsts_max_age() -> u64 {
+    63072000 // 2 years
+}
+
+fn default_rate_limit_burst() -> u32 {
+    10
+}
+
+fn default_auth_lockout_threshold() -> u32 {
+    5
+}
+
+fn default_auth_lockout_duration() -> u64 {
+    30 // seconds
+}
+
+fn default_auth_lockout_multiplier() -> f64 {
+    2.0
+}
+
+fn default_auth_lockout_max_duration() -> u64 {
+    1800 // 30 minutes
+}
+
+fn default_auto_generate_cn() -> String {
+    "localhost".to_string()
+}
+
+fn default_auto_generate_san() -> Vec<String> {
+    vec!["localhost".to_string(), "127.0.0.1".to_string(), "::1".to_string()]
+}
+
+fn default_auto_generate_validity_days() -> u32 {
+    365
+}
+
 fn default_compression_algorithms() -> Vec<CompressionAlgorithm> {
     vec![CompressionAlgorithm::Gzip, CompressionAlgorithm::Zstd]
 }
@@ -538,8 +647,19 @@ impl Default for SecurityConfig {
             user_db_file: None,
             cors_enabled: default_false(),
             cors_allowed_origins: vec![],
+            hsts_enabled: default_true(),
+            hsts_max_age: default_hsts_max_age(),
+            hsts_include_subdomains: default_true(),
+            hsts_preload: default_false(),
             rate_limiting_enabled: default_false(),
             rate_limit: default_rate_limit(),
+            rate_limit_burst: default_rate_limit_burst(),
+            trust_proxy_headers: default_false(),
+            auth_lockout_threshold: default_auth_lockout_threshold(),
+            auth_lockout_duration: default_auth_lockout_duration(),
+            auth_lockout_multiplier: default_auth_lockout_multiplier(),
+            auth_lockout_max_duration: default_auth_lockout_max_duration(),
+            mtls_user_mapping: MtlsUserMapping::default(),
             compression_enabled: default_true(),
             compression_algorithms: default_compression_algorithms(),
             compression_min_size: default_compression_min_size(),
@@ -568,12 +688,14 @@ impl ServerConfig {
 
     /// Validate the configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
-        // Validate TLS files exist
-        if !self.tls.cert_file.exists() {
-            return Err(ConfigError::CertNotFound(self.tls.cert_file.clone()));
-        }
-        if !self.tls.key_file.exists() {
-            return Err(ConfigError::KeyNotFound(self.tls.key_file.clone()));
+        // Validate TLS files exist (skip when auto_generate is enabled — files will be created at startup)
+        if !self.tls.auto_generate {
+            if !self.tls.cert_file.exists() {
+                return Err(ConfigError::CertNotFound(self.tls.cert_file.clone()));
+            }
+            if !self.tls.key_file.exists() {
+                return Err(ConfigError::KeyNotFound(self.tls.key_file.clone()));
+            }
         }
 
         // Validate share paths exist

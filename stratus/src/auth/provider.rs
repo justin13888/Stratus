@@ -1,5 +1,6 @@
 use crate::auth::user::User;
-use axum::http::HeaderMap;
+use axum::body::Body;
+use http::Request;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -19,10 +20,10 @@ pub enum AuthResult {
 /// This abstraction allows different authentication methods to be implemented
 /// (Basic Auth, Bearer tokens, mTLS, etc.) while providing a common interface
 pub trait AuthProvider {
-    /// Authenticate a request based on headers
+    /// Authenticate a request based on headers and extensions
     fn authenticate(
         &self,
-        headers: &HeaderMap,
+        request: &Request<Body>,
     ) -> Pin<Box<dyn Future<Output = AuthResult> + Send + '_>>;
 
     /// Get the authentication scheme name (e.g., "Basic", "Bearer")
@@ -40,7 +41,7 @@ pub struct NoAuth;
 impl AuthProvider for NoAuth {
     fn authenticate(
         &self,
-        _headers: &HeaderMap,
+        _request: &Request<Body>,
     ) -> Pin<Box<dyn Future<Output = AuthResult> + Send + '_>> {
         Box::pin(async { AuthResult::Success(User::new("anonymous".to_string())) })
     }
@@ -61,9 +62,9 @@ mod tests {
     #[tokio::test]
     async fn test_no_auth() {
         let provider = NoAuth;
-        let headers = HeaderMap::new();
+        let req = Request::builder().body(Body::empty()).unwrap();
 
-        let result = provider.authenticate(&headers).await;
+        let result = provider.authenticate(&req).await;
         assert!(matches!(result, AuthResult::Success(_)));
 
         if let AuthResult::Success(user) = result {

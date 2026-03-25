@@ -151,19 +151,45 @@ impl UserStore {
     }
 
     /// Verify a user's password and return a User object if valid
+    ///
+    /// Always performs an Argon2 hash computation, even when the username does not exist,
+    /// to prevent timing-based username enumeration attacks.
     pub fn verify(&self, username: &str, password: &str) -> Option<User> {
-        let entry = self.users.get(username)?;
+        // Precomputed Argon2id hash with parameters matching server config (m=65536, t=3, p=4).
+        // Used for a dummy verification when the username is not found, so that both the
+        // "user not found" and "wrong password" paths take the same amount of time.
+        const DUMMY_HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
-        // Verify password using the shared stratus-auth library
-        if stratus_auth::verify_password(password, &entry.password_hash).ok()? {
-            Some(
-                User::new(username.to_string())
-                    .with_groups(entry.groups.clone())
-                    .with_metadata(entry.metadata.clone()),
-            )
-        } else {
-            None
+        match self.users.get(username) {
+            Some(entry) => {
+                // Verify password using the shared stratus-auth library
+                if stratus_auth::verify_password(password, &entry.password_hash)
+                    .unwrap_or(false)
+                {
+                    Some(
+                        User::new(username.to_string())
+                            .with_groups(entry.groups.clone())
+                            .with_metadata(entry.metadata.clone()),
+                    )
+                } else {
+                    None
+                }
+            }
+            None => {
+                // Perform dummy verification to equalize timing with the found-but-wrong-password path
+                let _ = stratus_auth::verify_password(password, DUMMY_HASH);
+                None
+            }
         }
+    }
+
+    /// Look up a user by username without password verification (for mTLS auth)
+    pub fn get_user(&self, username: &str) -> Option<User> {
+        self.users.get(username).map(|entry| {
+            User::new(username.to_string())
+                .with_groups(entry.groups.clone())
+                .with_metadata(entry.metadata.clone())
+        })
     }
 
     /// Check if a user exists in the store
@@ -225,6 +251,11 @@ impl ReloadableUserStore {
     pub fn verify(&self, username: &str, password: &str) -> Option<User> {
         let store = self.inner.read().unwrap();
         store.verify(username, password)
+    }
+
+    /// Look up a user by username without password verification (for mTLS auth)
+    pub fn get_user(&self, username: &str) -> Option<User> {
+        self.inner.read().unwrap().get_user(username)
     }
 
     /// Get the number of users in the store

@@ -1,8 +1,10 @@
 use crate::auth::provider::{AuthProvider, AuthResult};
 use crate::auth::user::ReloadableUserStore;
 use crate::errors::AuthError;
-use axum::http::{HeaderMap, HeaderValue};
+use axum::body::Body;
+use axum::http::HeaderValue;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use http::Request;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -75,10 +77,10 @@ impl BasicAuthProvider {
 impl AuthProvider for BasicAuthProvider {
     fn authenticate(
         &self,
-        headers: &HeaderMap,
+        request: &Request<Body>,
     ) -> Pin<Box<dyn Future<Output = AuthResult> + Send + '_>> {
         // Extract Authorization header
-        let auth_header = match headers.get(axum::http::header::AUTHORIZATION) {
+        let auth_header = match request.headers().get(axum::http::header::AUTHORIZATION) {
             Some(header) => header,
             None => {
                 debug!("No Authorization header present");
@@ -124,10 +126,7 @@ impl AuthProvider for BasicAuthProvider {
                 }
                 None => {
                     debug!("Authentication failed for user: {}", username);
-                    AuthResult::Failed(format!(
-                        "Invalid username or password for user: {}",
-                        username
-                    ))
+                    AuthResult::Failed("Invalid credentials".to_string())
                 }
             }
         })
@@ -148,6 +147,14 @@ mod tests {
     use crate::auth::user::{ReloadableUserStore, UserStore};
     use std::collections::HashMap;
 
+    fn make_request(auth_header: Option<&str>) -> Request<Body> {
+        let mut builder = Request::builder();
+        if let Some(val) = auth_header {
+            builder = builder.header(axum::http::header::AUTHORIZATION, val);
+        }
+        builder.body(Body::empty()).unwrap()
+    }
+
     #[tokio::test]
     async fn test_basic_auth_success() {
         let mut store = UserStore::new();
@@ -161,15 +168,10 @@ mod tests {
 
         let provider = BasicAuthProvider::new(ReloadableUserStore::new(store));
 
-        // Create valid Basic Auth header
         let credentials = BASE64.encode("alice:secret123");
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            axum::http::header::AUTHORIZATION,
-            format!("Basic {}", credentials).parse().unwrap(),
-        );
+        let req = make_request(Some(&format!("Basic {}", credentials)));
 
-        let result = provider.authenticate(&headers).await;
+        let result = provider.authenticate(&req).await;
         assert!(matches!(result, AuthResult::Success(_)));
 
         if let AuthResult::Success(user) = result {
@@ -186,15 +188,10 @@ mod tests {
 
         let provider = BasicAuthProvider::new(ReloadableUserStore::new(store));
 
-        // Create Basic Auth header with wrong password
         let credentials = BASE64.encode("alice:wrongpassword");
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            axum::http::header::AUTHORIZATION,
-            format!("Basic {}", credentials).parse().unwrap(),
-        );
+        let req = make_request(Some(&format!("Basic {}", credentials)));
 
-        let result = provider.authenticate(&headers).await;
+        let result = provider.authenticate(&req).await;
         assert!(matches!(result, AuthResult::Failed(_)));
     }
 
@@ -203,8 +200,8 @@ mod tests {
         let store = UserStore::new();
         let provider = BasicAuthProvider::new(ReloadableUserStore::new(store));
 
-        let headers = HeaderMap::new();
-        let result = provider.authenticate(&headers).await;
+        let req = make_request(None);
+        let result = provider.authenticate(&req).await;
         assert!(matches!(result, AuthResult::NoCredentials));
     }
 
@@ -213,13 +210,8 @@ mod tests {
         let store = UserStore::new();
         let provider = BasicAuthProvider::new(ReloadableUserStore::new(store));
 
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            axum::http::header::AUTHORIZATION,
-            "Bearer token123".parse().unwrap(),
-        );
-
-        let result = provider.authenticate(&headers).await;
+        let req = make_request(Some("Bearer token123"));
+        let result = provider.authenticate(&req).await;
         assert!(matches!(result, AuthResult::Failed(_)));
     }
 

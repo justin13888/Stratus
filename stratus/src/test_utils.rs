@@ -4,7 +4,7 @@
 //! for creating test fixtures, making tests more readable and maintainable.
 
 use crate::auth::User;
-use crate::config::{AuthMethod, NetworkConfig, SecurityConfig, ShareConfig};
+use crate::config::{AuthMethod, MtlsUserMapping, NetworkConfig, SecurityConfig, ShareConfig};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -216,8 +216,19 @@ impl SecurityConfigBuilder {
             user_db_file: self.user_db_file,
             cors_enabled: self.cors_enabled,
             cors_allowed_origins: self.cors_allowed_origins,
+            hsts_enabled: true,
+            hsts_max_age: 63072000,
+            hsts_include_subdomains: true,
+            hsts_preload: false,
             rate_limiting_enabled: false,
             rate_limit: 60,
+            rate_limit_burst: 10,
+            trust_proxy_headers: false,
+            auth_lockout_threshold: 5,
+            auth_lockout_duration: 30,
+            auth_lockout_multiplier: 2.0,
+            auth_lockout_max_duration: 1800,
+            mtls_user_mapping: MtlsUserMapping::Cn,
             compression_enabled: true,
             compression_algorithms: vec![],
             compression_min_size: 1024,

@@ -11,6 +11,7 @@ use listenfd::ListenFd;
 use tracing::{error, info, warn};
 
 mod auth;
+mod cert;
 mod config;
 mod errors;
 mod logging;
@@ -107,8 +108,21 @@ async fn main() -> Result<()> {
 
     info!("Working directory: {:?}", workdir);
 
+    // Auto-generate self-signed certificate if configured and cert/key are missing
+    if let Err(e) = cert::maybe_generate_cert(&tls_config) {
+        return Err(eyre!("Failed to auto-generate TLS certificate: {}", e));
+    }
+
     // Configure TLS
     let rustls_config = tls::configure_rustls(&tls_config).await?;
+
+    // Start TLS cert hot-reloader
+    if let Err(e) = tls::start_cert_watcher(rustls_config.clone(), tls_config.clone()) {
+        warn!("Failed to start TLS cert watcher: {}", e);
+        warn!("TLS certificates will not be hot-reloaded on changes");
+    } else {
+        info!("TLS cert hot-reloading enabled");
+    }
 
     // Determine metrics server address - use explicit config or default to main server address
     let metrics_bind_addr = if metrics_config.enabled {
@@ -247,11 +261,17 @@ async fn main() -> Result<()> {
             .graceful_shutdown(Some(Duration::from_secs(network_config.connection_timeout)));
     });
 
-    // Start the server with connection limiting
-    let server = axum_server::from_tcp_rustls(listener, rustls_config).handle(handle);
+    // Start the server. MtlsAcceptor wraps RustlsAcceptor and injects the
+    // peer certificate (if present) as a PeerCertificate request extension,
+    // which MtlsAuthProvider reads. When mTLS is not configured the extension
+    // is simply absent and basic auth continues to work normally.
+    let server = axum_server::Server::from_tcp(listener)
+        .acceptor(tls::MtlsAcceptor::new(rustls_config))
+        .handle(handle);
 
-    // Wrap the service to enforce connection limits
-    let make_service = app.into_make_service();
+    // Use into_make_service_with_connect_info so that ConnectInfo<SocketAddr> is
+    // available as a request extension (required by rate limiting and auth middleware)
+    let make_service = app.into_make_service_with_connect_info::<SocketAddr>();
 
     info!("Server ready to accept connections");
 
@@ -283,6 +303,20 @@ fn build_app(
         "Authentication: enabled={}, method={:?}",
         security_config.auth_required, security_config.auth_method
     );
+
+    // Create auth brute-force rate limiter if auth lockout is configured
+    let auth_rate_limiter = {
+        use auth::rate_limit::{AuthRateLimitConfig, AuthRateLimiter};
+        use std::sync::Arc;
+        use std::time::Duration;
+        let limiter_config = AuthRateLimitConfig {
+            lockout_threshold: security_config.auth_lockout_threshold,
+            initial_lockout: Duration::from_secs(security_config.auth_lockout_duration),
+            backoff_multiplier: security_config.auth_lockout_multiplier,
+            max_lockout: Duration::from_secs(security_config.auth_lockout_max_duration),
+        };
+        Arc::new(AuthRateLimiter::new(limiter_config))
+    };
 
     // Create share router with state
     let share_router = Router::new()
@@ -346,9 +380,13 @@ fn build_app(
         None
     };
 
-    app = middleware::apply_middleware(app, middleware_config, auth_provider_opt);
+    app = middleware::apply_middleware(
+        app,
+        middleware_config,
+        auth_provider_opt,
+        Some(auth_rate_limiter),
+    );
 
-    // TODO: Implement rate limiting if security_config.rate_limiting_enabled
     // TODO: Implement access logging if logging_config.access_log is enabled
 
     Ok(app)
