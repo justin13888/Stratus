@@ -13,6 +13,14 @@ use crate::config::ShareConfig;
 use crate::errors::ShareError;
 use crate::vfs::Vfs;
 
+/// Stream chunk size for file responses.
+/// 64 KiB balances per-chunk memory overhead against the number of read syscalls.
+const FILE_STREAM_CHUNK_BYTES: usize = 64 * 1024;
+
+/// Serve a single file from the VFS.
+///
+/// `_share_config` is reserved for future per-share enforcement (e.g. `max_file_size`).
+/// Authorization is already applied before this call in `serve_share()`.
 pub async fn serve_file<V: Vfs>(
     file_path: &PathBuf,
     _share_config: &ShareConfig,
@@ -99,7 +107,7 @@ pub async fn serve_file<V: Vfs>(
 
             // Take only the requested range
             let limited_file = file.take(content_length);
-            let stream = ReaderStream::with_capacity(limited_file, 64 * 1024);
+            let stream = ReaderStream::with_capacity(limited_file, FILE_STREAM_CHUNK_BYTES);
             let body = Body::from_stream(stream);
 
             let content_range = format!("bytes {}-{}/{}", start, end, file_size);
@@ -120,7 +128,7 @@ pub async fn serve_file<V: Vfs>(
         None => {
             // Serve full file
             // Create a stream with optimal buffer size (64KB chunks)
-            let stream = ReaderStream::with_capacity(file, 64 * 1024);
+            let stream = ReaderStream::with_capacity(file, FILE_STREAM_CHUNK_BYTES);
             let body = Body::from_stream(stream);
 
             (

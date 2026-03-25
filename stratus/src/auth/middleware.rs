@@ -90,11 +90,11 @@ impl AuthMiddleware {
         let client_ip = Self::client_ip(&request);
 
         // Check for active auth lockout before attempting authentication
-        if let (Some(limiter), Some(ip)) = (&self.rate_limiter, client_ip) {
-            if let Some(remaining) = limiter.check_locked(ip) {
-                warn!(ip = %ip, remaining_secs = remaining.as_secs(), "Auth request blocked: IP is locked out");
-                return Self::locked_out_response(remaining.as_secs());
-            }
+        if let (Some(limiter), Some(ip)) = (&self.rate_limiter, client_ip)
+            && let Some(remaining) = limiter.check_locked(ip)
+        {
+            warn!(ip = %ip, remaining_secs = remaining.as_secs(), "Auth request blocked: IP is locked out");
+            return Self::locked_out_response(remaining.as_secs());
         }
 
         let auth_result = self.provider.authenticate(&request).await;

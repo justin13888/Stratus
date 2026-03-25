@@ -4,6 +4,7 @@ use tracing::debug;
 
 /// Permission level for a share
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[allow(dead_code)]
 pub enum Permission {
     None,
     Read,
@@ -11,7 +12,19 @@ pub enum Permission {
     Admin,
 }
 
-/// Check if a user has the required permission for a share
+/// Check if a user has the required permission for a share.
+///
+/// Check order (highest priority first):
+/// 1. `deny_list` — always blocks, overrides everything including `admin_list`.
+/// 2. `admin_list` — full access (Read + Write + Admin), overrides `read_only`.
+/// 3. `write_list` — read + write access; overrides the `read_only` flag because
+///    explicit list membership is an intentional grant that supersedes the default.
+/// 4. `read_list` — read-only access.
+/// 5. Empty-lists fallback — if ALL four lists are empty, the share is open to every
+///    authenticated user (Samba-compatible "unconfigured share" default). The `read_only`
+///    flag IS respected here. To restrict a share, populate at least one list.
+///
+/// Unauthenticated (guest) users are only allowed read access when `guest_ok = true`.
 pub fn check_permission(
     user: Option<&User>,
     share_config: &ShareConfig,
@@ -245,13 +258,13 @@ mod tests {
     }
 
     // ============================================================================
-    // EDGE CASE TESTS - These expose potential design flaws
+    // Edge case tests verifying documented policy decisions
     // ============================================================================
 
     #[test]
-    fn test_edge_case_write_list_on_readonly_share() {
-        // EDGE CASE: User in write_list but share is read_only
-        // QUESTION: Should read_only be absolute or can write_list override it?
+    fn test_write_list_overrides_read_only() {
+        // Documented: explicit write_list membership supersedes the read_only default.
+        // read_only only applies to the empty-list fallback path.
         let config = create_share_config(
             vec![],
             vec!["bob".to_string()],
@@ -261,17 +274,12 @@ mod tests {
             false,
         );
         let user = create_user("bob", vec![]);
-
-        // Currently: Bob can write (write_list overrides read_only)
-        // Should this be allowed?
         assert!(check_permission(Some(&user), &config, Permission::Write));
-        // ^ This test PASSES but is it the RIGHT behavior?
     }
 
     #[test]
-    fn test_edge_case_admin_on_readonly_share() {
-        // EDGE CASE: Admin on read_only share
-        // QUESTION: Can admins write on read_only shares?
+    fn test_admin_overrides_read_only() {
+        // Documented: admin_list membership grants full access regardless of read_only.
         let config = create_share_config(
             vec![],
             vec![],
@@ -281,33 +289,22 @@ mod tests {
             false,
         );
         let user = create_user("alice", vec![]);
-
-        // Currently: Admin can write (admin overrides read_only)
         assert!(check_permission(Some(&user), &config, Permission::Write));
-        // ^ Is this correct? Should read_only be enforced even for admins?
     }
 
     #[test]
-    fn test_edge_case_empty_lists_security_risk() {
-        // EDGE CASE: Empty ACLs allow all authenticated users
-        // SECURITY RISK: This is deny-by-default for non-empty lists,
-        // but allow-by-default for empty lists - inconsistent!
+    fn test_empty_lists_allow_all_authenticated() {
+        // Documented: empty ACL lists = Samba-compatible open-share default.
+        // Every authenticated user gets write access. Populate a list to restrict.
         let config = create_share_config(vec![], vec![], vec![], vec![], false, false);
-        let random_user = create_user("random_hacker", vec![]);
-
-        // Currently: ANY authenticated user gets write access!
-        assert!(check_permission(
-            Some(&random_user),
-            &config,
-            Permission::Write
-        ));
-        // ^ This might be a security issue - implicit allow
+        let user = create_user("any_user", vec![]);
+        assert!(check_permission(Some(&user), &config, Permission::Write));
     }
 
     #[test]
-    fn test_edge_case_deny_list_only() {
-        // EDGE CASE: Only deny_list is set, other lists empty
-        // What happens to users not in deny_list?
+    fn test_deny_list_only_allows_others_via_empty_fallback() {
+        // Documented: deny_list is a blocklist; users not in it reach the empty-list
+        // fallback and get default write access (since no other lists are populated).
         let config = create_share_config(
             vec![],
             vec![],
@@ -319,11 +316,7 @@ mod tests {
         let alice = create_user("alice", vec![]);
         let bob = create_user("bob", vec![]);
 
-        // Bob is denied
         assert!(!check_permission(Some(&bob), &config, Permission::Read));
-
-        // Alice is NOT in deny_list, and lists are "empty", so she gets default access
         assert!(check_permission(Some(&alice), &config, Permission::Write));
-        // ^ Is this correct? deny_list alone doesn't mean "deny only these, allow others"
     }
 }

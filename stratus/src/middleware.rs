@@ -13,6 +13,7 @@ use axum::{
     extract::{ConnectInfo, Request as AxumRequest},
     middleware as axum_middleware,
 };
+use governor::clock::{Clock, QuantaClock};
 use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
@@ -39,7 +40,7 @@ pub struct MiddlewareConfig {
     pub cors_allowed_origins: Vec<String>,
     pub compression_enabled: bool,
     pub compression_algorithms: Vec<config::CompressionAlgorithm>,
-    pub compression_min_size: usize, // in KB
+    pub compression_min_size: usize, // in bytes
 
     // Security headers
     pub hsts_enabled: bool,
@@ -56,7 +57,7 @@ pub struct MiddlewareConfig {
     // Network settings
     pub max_connections: usize,
     pub request_timeout: u64,    // in seconds
-    pub max_request_size: usize, // in MB
+    pub max_request_size: usize, // in bytes
 
     // Metrics
     pub metrics_enabled: bool,
@@ -110,15 +111,18 @@ pub fn apply_middleware(
     app = app.layer(RequestDecompressionLayer::new());
 
     // Layer 2: Request body size limiting
-    let max_body_size = config.max_request_size * 1024 * 1024; // Convert MB to bytes
-    app = app.layer(RequestBodyLimitLayer::new(max_body_size));
-    info!("Request body size limit: {} MB", config.max_request_size);
+    app = app.layer(RequestBodyLimitLayer::new(config.max_request_size));
+    info!(
+        "Request body size limit: {} bytes ({} MiB)",
+        config.max_request_size,
+        config.max_request_size / (1024 * 1024)
+    );
 
     // Layer 3: Response compression (if enabled)
     if config.compression_enabled {
         app = apply_compression(app, &config);
         info!(
-            "Compression enabled with algorithms: {:?}, min size: {} KB",
+            "Compression enabled with algorithms: {:?}, min size: {} bytes",
             config.compression_algorithms, config.compression_min_size
         );
     }
@@ -196,8 +200,7 @@ fn apply_compression(app: Router, config: &MiddlewareConfig) -> Router {
         .zstd(has_zstd);
 
     // Only compress responses larger than the configured minimum size
-    let min_size_bytes = config.compression_min_size * 1024; // Convert KB to bytes
-    let min_size = min_size_bytes.min(u16::MAX as usize) as u16;
+    let min_size = config.compression_min_size.min(u16::MAX as usize) as u16;
     let predicate = SizeAbove::new(min_size);
 
     app.layer(compression.compress_when(predicate))
@@ -253,7 +256,7 @@ fn apply_rate_limiting(app: Router, config: &MiddlewareConfig) -> Router {
     let limiter: Arc<DefaultKeyedRateLimiter<IpAddr>> = Arc::new(RateLimiter::keyed(quota));
     let trust_proxy = config.trust_proxy_headers;
 
-    app.layer(axum_middleware::from_fn(move |request: AxumRequest, next| {
+    app.layer(axum_middleware::from_fn(move |request: AxumRequest, next: axum::middleware::Next| {
         let limiter = Arc::clone(&limiter);
         async move {
             // Extract client IP from ConnectInfo (populated by axum-server)
@@ -282,7 +285,7 @@ fn apply_rate_limiting(app: Router, config: &MiddlewareConfig) -> Router {
                 match limiter.check_key(&ip) {
                     Ok(()) => {}
                     Err(negative) => {
-                        let wait_time = negative.wait_time_from(std::time::Instant::now());
+                        let wait_time = negative.wait_time_from(QuantaClock::default().now());
                         let retry_after = wait_time.as_secs().max(1).to_string();
                         warn!(ip = %ip, "Rate limit exceeded");
                         let mut response =
@@ -419,9 +422,33 @@ mod tests {
     use axum::{Router, body::Body, routing::get};
     use tower::ServiceExt;
 
-    // Helper to create test router
     fn test_router() -> Router {
         Router::new().route("/test", get(|| async { "test response" }))
+    }
+
+    /// Base `MiddlewareConfig` for tests. Override only the fields under test.
+    fn test_middleware_config() -> MiddlewareConfig {
+        MiddlewareConfig {
+            auth_required: false,
+            cors_enabled: false,
+            cors_allowed_origins: vec![],
+            compression_enabled: false,
+            compression_algorithms: vec![],
+            compression_min_size: 1024,
+            hsts_enabled: false,
+            hsts_max_age: config::HSTS_TWO_YEARS_SECS,
+            hsts_include_subdomains: true,
+            hsts_preload: false,
+            rate_limiting_enabled: false,
+            rate_limit: 60,
+            rate_limit_burst: 10,
+            trust_proxy_headers: false,
+            max_connections: 1000,
+            request_timeout: 30,
+            max_request_size: 100 * 1024 * 1024,
+            metrics_enabled: false,
+            server_name: "Test".to_string(),
+        }
     }
 
     #[tokio::test]
@@ -494,24 +521,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_compression_disabled() {
-        let config = MiddlewareConfig {
-            auth_required: false,
-            cors_enabled: false,
-            cors_allowed_origins: vec![],
-            compression_enabled: false,
-            compression_algorithms: vec![],
-            compression_min_size: 1,
-            hsts_enabled: false,
-            hsts_max_age: 63072000,
-            hsts_include_subdomains: true,
-            hsts_preload: false,
-            max_connections: 100,
-            request_timeout: 30,
-            max_request_size: 10,
-            metrics_enabled: false,
-            server_name: "Test".to_string(),
-        };
-
+        let config = test_middleware_config();
         let app = apply_middleware(test_router(), config, None, None);
 
         let response = app
@@ -526,24 +536,12 @@ mod tests {
     #[tokio::test]
     async fn test_apply_compression_enabled() {
         let config = MiddlewareConfig {
-            auth_required: false,
-            cors_enabled: false,
-            cors_allowed_origins: vec![],
             compression_enabled: true,
             compression_algorithms: vec![
                 config::CompressionAlgorithm::Gzip,
                 config::CompressionAlgorithm::Br,
             ],
-            compression_min_size: 1, // 1 KB minimum
-            hsts_enabled: false,
-            hsts_max_age: 63072000,
-            hsts_include_subdomains: true,
-            hsts_preload: false,
-            max_connections: 100,
-            request_timeout: 30,
-            max_request_size: 10,
-            metrics_enabled: false,
-            server_name: "Test".to_string(),
+            ..test_middleware_config()
         };
 
         let app = apply_middleware(test_router(), config, None, None);
@@ -564,21 +562,9 @@ mod tests {
     #[tokio::test]
     async fn test_apply_security_headers() {
         let config = MiddlewareConfig {
-            auth_required: false,
-            cors_enabled: false,
-            cors_allowed_origins: vec![],
-            compression_enabled: false,
-            compression_algorithms: vec![],
-            compression_min_size: 1,
             hsts_enabled: true,
-            hsts_max_age: 31536000,
-            hsts_include_subdomains: true,
-            hsts_preload: false,
-            max_connections: 100,
-            request_timeout: 30,
-            max_request_size: 10,
-            metrics_enabled: false,
-            server_name: "Test".to_string(),
+            hsts_max_age: 31536000, // 1 year (intentionally different from the 2-year default)
+            ..test_middleware_config()
         };
         let app = apply_security_headers(test_router(), &config);
 
@@ -608,23 +594,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_security_headers_hsts_disabled() {
-        let config = MiddlewareConfig {
-            auth_required: false,
-            cors_enabled: false,
-            cors_allowed_origins: vec![],
-            compression_enabled: false,
-            compression_algorithms: vec![],
-            compression_min_size: 1,
-            hsts_enabled: false,
-            hsts_max_age: 63072000,
-            hsts_include_subdomains: true,
-            hsts_preload: false,
-            max_connections: 100,
-            request_timeout: 30,
-            max_request_size: 10,
-            metrics_enabled: false,
-            server_name: "Test".to_string(),
-        };
+        let config = test_middleware_config(); // hsts_enabled defaults to false
         let app = apply_security_headers(test_router(), &config);
 
         let response = app
@@ -641,21 +611,9 @@ mod tests {
     #[tokio::test]
     async fn test_security_headers_hsts_preload() {
         let config = MiddlewareConfig {
-            auth_required: false,
-            cors_enabled: false,
-            cors_allowed_origins: vec![],
-            compression_enabled: false,
-            compression_algorithms: vec![],
-            compression_min_size: 1,
             hsts_enabled: true,
-            hsts_max_age: 63072000,
-            hsts_include_subdomains: true,
             hsts_preload: true,
-            max_connections: 100,
-            request_timeout: 30,
-            max_request_size: 10,
-            metrics_enabled: false,
-            server_name: "Test".to_string(),
+            ..test_middleware_config()
         };
         let app = apply_security_headers(test_router(), &config);
 

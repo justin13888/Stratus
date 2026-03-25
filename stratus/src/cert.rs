@@ -40,7 +40,8 @@ pub fn generate_self_signed(
             params.subject_alt_names.push(SanType::IpAddress(ip));
         } else {
             params.subject_alt_names.push(SanType::DnsName(
-                san.try_into()
+                san.as_str()
+                    .try_into()
                     .map_err(|_| eyre!("Invalid DNS name in SAN: {}", san))?,
             ));
         }

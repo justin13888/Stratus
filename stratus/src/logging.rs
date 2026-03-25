@@ -52,7 +52,7 @@ fn init_file_logger(log_file: &std::path::Path, env_filter: EnvFilter) -> Result
         .unwrap_or_else(|| std::ffi::OsStr::new("stratus.log"));
 
     let file_appender = tracing_appender::rolling::daily(parent_dir, file_name);
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
     tracing_subscriber::registry()
         .with(
@@ -65,8 +65,10 @@ fn init_file_logger(log_file: &std::path::Path, env_filter: EnvFilter) -> Result
         .with(env_filter)
         .init();
 
-    // Keep the guard alive for the lifetime of the program
-    std::mem::forget(_guard);
+    // Intentionally leak the guard to keep the non-blocking writer alive for the
+    // entire process lifetime. Dropping it here would flush and shut down the
+    // background logging thread, silently discarding subsequent log records.
+    Box::leak(Box::new(guard));
 
     Ok(())
 }

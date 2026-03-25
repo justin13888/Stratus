@@ -240,7 +240,7 @@ impl ReloadableUserStore {
         let new_store = UserStore::from_file(path)?;
 
         // Acquire write lock and replace the store
-        let mut store = self.inner.write().unwrap();
+        let mut store = self.inner.write().expect("user store write lock poisoned");
         *store = new_store;
 
         info!("User database reloaded: {} user(s)", store.len());
@@ -249,24 +249,27 @@ impl ReloadableUserStore {
 
     /// Verify a user's password and return a User object if valid
     pub fn verify(&self, username: &str, password: &str) -> Option<User> {
-        let store = self.inner.read().unwrap();
+        let store = self.inner.read().expect("user store read lock poisoned");
         store.verify(username, password)
     }
 
     /// Look up a user by username without password verification (for mTLS auth)
     pub fn get_user(&self, username: &str) -> Option<User> {
-        self.inner.read().unwrap().get_user(username)
+        self.inner
+            .read()
+            .expect("user store read lock poisoned")
+            .get_user(username)
     }
 
     /// Get the number of users in the store
     pub fn len(&self) -> usize {
-        let store = self.inner.read().unwrap();
+        let store = self.inner.read().expect("user store read lock poisoned");
         store.len()
     }
 
     /// Check if the store is empty
     pub fn is_empty(&self) -> bool {
-        let store = self.inner.read().unwrap();
+        let store = self.inner.read().expect("user store read lock poisoned");
         store.is_empty()
     }
 }

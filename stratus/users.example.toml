@@ -10,16 +10,13 @@
 # key = "value"
 
 [users.admin]
-# Password: admin123
 password_hash = "$argon2id$v=19$m=65536,t=3,p=4$Y7cQzI7q+5bn/h5VmZw+Qg$xxK+4zLF11OJA5pUj95/kuNvjysSZPpX1nQPhlpZb8M"
 groups = ["admin", "users"]
 
 [users.demo]
-# Password: demo123
 password_hash = "$argon2id$v=19$m=65536,t=3,p=4$Bi8yUmp/yO87i8vrxcwXhA$5nt+3zIPezzkuiY/UMLA5QBW2Px0b3+Qm1SAKb2niyo"
 groups = ["users"]
 
 [users.guest]
-# Password: guest
 password_hash = "$argon2id$v=19$m=65536,t=3,p=4$R0RPe8wI3EYuLSN8BelbUw$t735M9XYRHLrIfofTpF7pYwQwWE42mGYU/B/8s1+aCU"
 groups = ["guests"]

@@ -26,6 +26,7 @@ impl BasicAuthProvider {
     }
 
     /// Create a new Basic Auth provider with a custom realm
+    #[allow(dead_code)]
     pub fn with_realm(mut self, realm: String) -> Self {
         self.realm = realm;
         self

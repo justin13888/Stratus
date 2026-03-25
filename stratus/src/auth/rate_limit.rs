@@ -92,10 +92,9 @@ impl AuthRateLimiter {
             // Compute how many lockout steps have been taken
             let lockout_step = (failures - self.config.lockout_threshold) / self.config.lockout_threshold;
             let multiplier = self.config.backoff_multiplier.powi(lockout_step as i32);
-            let duration_secs =
-                (self.config.initial_lockout.as_secs_f64() * multiplier) as u64;
-            let lockout_duration = Duration::from_secs(duration_secs)
-                .min(self.config.max_lockout);
+            let lockout_duration =
+                Duration::from_secs_f64(self.config.initial_lockout.as_secs_f64() * multiplier)
+                    .min(self.config.max_lockout);
 
             let locked_until = Instant::now() + lockout_duration;
             record.locked_until = Some(locked_until);

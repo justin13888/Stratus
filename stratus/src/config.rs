@@ -40,6 +40,7 @@ pub enum LogLevel {
 
 impl LogLevel {
     /// Returns all log level variants
+    #[allow(dead_code)]
     pub const fn all() -> [LogLevel; 5] {
         [
             LogLevel::Trace,
@@ -533,8 +534,12 @@ fn default_rate_limit() -> u32 {
     60
 }
 
+/// HSTS max-age: 2 years in seconds (730 days × 86 400 s/day).
+/// Exceeds the 1-year minimum required for HSTS preload list eligibility.
+pub const HSTS_TWO_YEARS_SECS: u64 = 63_072_000;
+
 fn default_hsts_max_age() -> u64 {
-    63072000 // 2 years
+    HSTS_TWO_YEARS_SECS
 }
 
 fn default_rate_limit_burst() -> u32 {

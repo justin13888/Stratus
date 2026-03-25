@@ -21,6 +21,7 @@ mod network;
 mod shares;
 mod tls;
 mod vfs;
+mod watcher;
 
 #[cfg(test)]
 mod test_utils;
@@ -80,21 +81,8 @@ async fn main() -> Result<()> {
     info!("Shares: {} configured", shares.len());
     info!("Metrics: enabled={}", metrics_config.enabled);
 
-    // Initialize metrics exporter if enabled
-    let metrics_handle = if metrics_config.enabled {
-        match metrics::init_metrics_exporter() {
-            Ok(handle) => {
-                info!("Metrics collection enabled at {}", metrics_config.endpoint);
-                Some(handle)
-            }
-            Err(e) => {
-                warn!("Failed to initialize metrics exporter: {}", e);
-                None
-            }
-        }
-    } else {
-        None
-    };
+    // Initialize Prometheus metrics exporter
+    let metrics_handle = init_metrics_exporter(&metrics_config);
 
     // Determine working directory
     let workdir = server_settings
@@ -114,7 +102,7 @@ async fn main() -> Result<()> {
     }
 
     // Configure TLS
-    let rustls_config = tls::configure_rustls(&tls_config).await?;
+    let rustls_config = tls::configure_rustls(&tls_config)?;
 
     // Start TLS cert hot-reloader
     if let Err(e) = tls::start_cert_watcher(rustls_config.clone(), tls_config.clone()) {
@@ -124,62 +112,20 @@ async fn main() -> Result<()> {
         info!("TLS cert hot-reloading enabled");
     }
 
-    // Determine metrics server address - use explicit config or default to main server address
-    let metrics_bind_addr = if metrics_config.enabled {
-        let metrics_addr = metrics_config
-            .bind_address
-            .unwrap_or(server_settings.bind_address);
-        let metrics_port = metrics_config.port.unwrap_or(server_settings.port);
-        Some(SocketAddr::from((metrics_addr, metrics_port)))
-    } else {
-        None
-    };
-
-    // Determine if we need a separate metrics server
+    // Determine metrics server placement (separate vs. main server)
     let main_bind_addr = SocketAddr::from((server_settings.bind_address, server_settings.port));
-    let use_separate_metrics_server =
-        if let (Some(metrics_addr), Some(_handle)) = (metrics_bind_addr, &metrics_handle) {
-            // Only start separate server if the address is different from main server
-            // OR if either bind_address or port was explicitly configured (not both None)
-            let explicitly_configured =
-                metrics_config.bind_address.is_some() || metrics_config.port.is_some();
-            let different_address = metrics_addr != main_bind_addr;
+    let (metrics_bind_addr, use_separate_metrics_server) =
+        resolve_metrics_server(&metrics_config, main_bind_addr, &metrics_handle);
 
-            explicitly_configured && different_address
-        } else {
-            false
-        };
-
-    // Spawn separate metrics server if needed
+    // Spawn a separate plain-HTTP metrics server if configured
     if use_separate_metrics_server {
         let metrics_addr = metrics_bind_addr.unwrap();
-        let metrics_endpoint = metrics_config.endpoint.clone();
-        let metrics_handle_clone = metrics_handle.as_ref().unwrap().clone();
-
-        info!(
-            "Starting separate metrics server on {} (main server: {})",
-            metrics_addr, main_bind_addr
+        spawn_metrics_server(
+            metrics_addr,
+            main_bind_addr,
+            metrics_config.endpoint.clone(),
+            metrics_handle.as_ref().unwrap().clone(),
         );
-
-        tokio::spawn(async move {
-            let metrics_router = Router::new()
-                .route(&metrics_endpoint, get(metrics::metrics_handler))
-                .with_state(metrics_handle_clone);
-
-            let listener = match tokio::net::TcpListener::bind(metrics_addr).await {
-                Ok(l) => l,
-                Err(e) => {
-                    error!("Failed to bind metrics server to {}: {}", metrics_addr, e);
-                    return;
-                }
-            };
-
-            info!("Metrics server listening on {}", metrics_addr);
-
-            if let Err(e) = axum::serve(listener, metrics_router).await {
-                error!("Metrics server error: {}", e);
-            }
-        });
     } else if metrics_config.enabled && metrics_handle.is_some() {
         info!(
             "Metrics will be served on main server at {}{}",
@@ -201,65 +147,12 @@ async fn main() -> Result<()> {
         workdir,
     )?;
 
-    // Determine bind address
-    let bind_addr = SocketAddr::from((server_settings.bind_address, server_settings.port));
-
-    // Check for systemfd listener first
-    let mut listenfd = ListenFd::from_env();
-    let listener = match listenfd.take_tcp_listener(0).unwrap() {
-        Some(listener) => {
-            info!("Using systemfd listener");
-            listener.set_nonblocking(true).unwrap();
-            listener
-        }
-        None => {
-            // Configure socket with custom options
-            network::configure_socket(bind_addr, &network_config)?
-        }
-    };
-
+    let listener = acquire_listener(main_bind_addr, &network_config)?;
     info!("Server listening on {}", listener.local_addr().unwrap());
 
     // Create shutdown signal handler
     let handle = Handle::new();
-    let shutdown_handle = handle.clone();
-
-    // Spawn a task to listen for shutdown signals
-    tokio::spawn(async move {
-        // Wait for Ctrl+C or SIGTERM
-        let ctrl_c = async {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("Failed to install Ctrl+C handler");
-        };
-
-        #[cfg(unix)]
-        let terminate = async {
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("Failed to install SIGTERM handler")
-                .recv()
-                .await;
-        };
-
-        #[cfg(not(unix))]
-        let terminate = std::future::pending::<()>();
-
-        tokio::select! {
-            _ = ctrl_c => {
-                info!("Received Ctrl+C signal");
-            }
-            _ = terminate => {
-                info!("Received SIGTERM signal");
-            }
-        }
-
-        info!(
-            "Starting graceful shutdown with timeout of {}s",
-            network_config.connection_timeout
-        );
-        shutdown_handle
-            .graceful_shutdown(Some(Duration::from_secs(network_config.connection_timeout)));
-    });
+    spawn_shutdown_handler(handle.clone(), network_config.connection_timeout);
 
     // Start the server. MtlsAcceptor wraps RustlsAcceptor and injects the
     // peer certificate (if present) as a PeerCertificate request extension,
@@ -281,6 +174,144 @@ async fn main() -> Result<()> {
         .map_err(|e| eyre!("Server error: {}", e))?;
 
     Ok(())
+}
+
+/// Initialise the Prometheus metrics exporter if metrics are enabled.
+/// Returns `None` (with a warning) if initialisation fails.
+fn init_metrics_exporter(
+    config: &config::MetricsConfig,
+) -> Option<metrics_exporter_prometheus::PrometheusHandle> {
+    if !config.enabled {
+        return None;
+    }
+    match metrics::init_metrics_exporter() {
+        Ok(handle) => {
+            info!("Metrics collection enabled at {}", config.endpoint);
+            Some(handle)
+        }
+        Err(e) => {
+            warn!("Failed to initialize metrics exporter: {}", e);
+            None
+        }
+    }
+}
+
+/// Determine whether metrics should be served on a separate server and, if so,
+/// what address that server should bind to.
+///
+/// Returns `(metrics_bind_addr, use_separate_server)`.
+fn resolve_metrics_server(
+    config: &config::MetricsConfig,
+    main_addr: SocketAddr,
+    handle: &Option<metrics_exporter_prometheus::PrometheusHandle>,
+) -> (Option<SocketAddr>, bool) {
+    let metrics_addr = if config.enabled {
+        let addr = config.bind_address.unwrap_or(main_addr.ip());
+        let port = config.port.unwrap_or(main_addr.port());
+        Some(SocketAddr::from((addr, port)))
+    } else {
+        None
+    };
+
+    let use_separate = if let (Some(addr), Some(_)) = (metrics_addr, handle) {
+        // A separate server is only warranted when the operator has explicitly
+        // configured a different address or port AND the result differs from main.
+        let explicitly_configured = config.bind_address.is_some() || config.port.is_some();
+        explicitly_configured && addr != main_addr
+    } else {
+        false
+    };
+
+    (metrics_addr, use_separate)
+}
+
+/// Spawn a plain-HTTP server that serves only the Prometheus metrics endpoint.
+fn spawn_metrics_server(
+    metrics_addr: SocketAddr,
+    main_addr: SocketAddr,
+    endpoint: String,
+    handle: metrics_exporter_prometheus::PrometheusHandle,
+) {
+    info!(
+        "Starting separate metrics server on {} (main server: {})",
+        metrics_addr, main_addr
+    );
+
+    tokio::spawn(async move {
+        let metrics_router = Router::new()
+            .route(&endpoint, get(metrics::metrics_handler))
+            .with_state(handle);
+
+        let listener = match tokio::net::TcpListener::bind(metrics_addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                error!("Failed to bind metrics server to {}: {}", metrics_addr, e);
+                return;
+            }
+        };
+
+        info!("Metrics server listening on {}", metrics_addr);
+
+        if let Err(e) = axum::serve(listener, metrics_router).await {
+            error!("Metrics server error: {}", e);
+        }
+    });
+}
+
+/// Obtain a bound TCP listener, preferring a systemfd-passed socket (for
+/// zero-downtime dev reloads) and falling back to a freshly configured socket.
+fn acquire_listener(
+    bind_addr: SocketAddr,
+    network_config: &config::NetworkConfig,
+) -> Result<std::net::TcpListener> {
+    let mut listenfd = ListenFd::from_env();
+    match listenfd
+        .take_tcp_listener(0)
+        .map_err(|e| eyre!("Failed to check systemfd listener: {}", e))?
+    {
+        Some(listener) => {
+            info!("Using systemfd listener");
+            listener
+                .set_nonblocking(true)
+                .map_err(|e| eyre!("Failed to set listener non-blocking: {}", e))?;
+            Ok(listener)
+        }
+        None => network::configure_socket(bind_addr, network_config),
+    }
+}
+
+/// Spawn a task that waits for SIGINT or SIGTERM and then initiates a graceful
+/// shutdown with the configured connection drain timeout.
+fn spawn_shutdown_handler(handle: Handle, connection_timeout: u64) {
+    tokio::spawn(async move {
+        let ctrl_c = async {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("Failed to install Ctrl+C handler");
+        };
+
+        #[cfg(unix)]
+        let terminate = async {
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("Failed to install SIGTERM handler")
+                .recv()
+                .await;
+        };
+
+        #[cfg(not(unix))]
+        let terminate = std::future::pending::<()>();
+
+        tokio::select! {
+            _ = ctrl_c => { info!("Received Ctrl+C signal"); }
+            _ = terminate => { info!("Received SIGTERM signal"); }
+        }
+
+        info!(
+            "Starting graceful shutdown with timeout of {}s",
+            connection_timeout
+        );
+        handle.graceful_shutdown(Some(Duration::from_secs(connection_timeout)));
+    });
 }
 
 fn build_app(
@@ -359,8 +390,9 @@ fn build_app(
     }
 
     // TODO: Implement write operations (currently read-only)
-    // TODO: Implement authorization based on read_list, write_list, admin_list, deny_list
-    // TODO: Implement guest_ok handling
+    // Authorization based on read_list, write_list, admin_list, deny_list is enforced
+    // per-request in serve_share() via shares::authz::check_permission().
+    // guest_ok is handled in shares::authz::check_permission().
     // TODO: Implement max_connections per share
     // TODO: Implement versioning if enabled
     // TODO: Implement max_file_size enforcement on uploads

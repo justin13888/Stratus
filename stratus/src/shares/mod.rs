@@ -68,13 +68,12 @@ pub async fn serve_share<V: Vfs>(
         crate::metrics::record_share_request(share_name, 0, false);
         let err = ShareError::AccessDenied(share_name.to_string());
         return (StatusCode::FORBIDDEN, err.to_string()).into_response();
-    } else {
-        trace!(
-            "User {:?} granted access to share '{}'",
-            user.map(|u| &u.username),
-            share_name
-        );
     }
+    trace!(
+        "User {:?} granted access to share '{}'",
+        user.map(|u| &u.username),
+        share_name
+    );
 
     // Construct the full filesystem path
     let requested_path = state.vfs.join(&share_config.path, file_path);

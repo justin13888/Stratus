@@ -98,6 +98,7 @@ pub trait Vfs: Send + Sync + Clone + 'static {
     }
 
     /// Check if a path exists
+    #[allow(dead_code)]
     fn exists(&self, path: &Path) -> impl Future<Output = bool> + Send {
         async move { self.metadata(path).await.is_ok() }
     }

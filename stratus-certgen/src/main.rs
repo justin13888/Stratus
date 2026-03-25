@@ -232,12 +232,10 @@ fn set_validity(params: &mut CertificateParams, days: u32) {
 
 /// Write PEM content to a file, creating parent directories as needed
 fn write_pem(path: &PathBuf, pem: &str, description: &str) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).wrap_err_with(|| {
-                format!("Failed to create directory for {}: {}", description, parent.display())
-            })?;
-        }
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).wrap_err_with(|| {
+            format!("Failed to create directory for {}: {}", description, parent.display())
+        })?;
     }
     fs::write(path, pem).wrap_err_with(|| {
         format!(

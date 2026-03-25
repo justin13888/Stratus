@@ -10,6 +10,15 @@ use tracing::debug;
 
 use super::{Vfs, VfsEntry, VfsFile, VfsMetadata};
 
+/// Map an `io::Error` to the appropriate `VfsError` variant for the given path.
+fn map_io_err(e: io::Error, path: &Path) -> VfsError {
+    match e.kind() {
+        io::ErrorKind::NotFound => VfsError::NotFound(path.to_path_buf()),
+        io::ErrorKind::PermissionDenied => VfsError::PermissionDenied(path.to_path_buf()),
+        _ => VfsError::IoError(e),
+    }
+}
+
 /// A VFS file handle backed by the local filesystem
 pub struct LocalFile {
     file: fs::File,
@@ -75,29 +84,15 @@ impl Vfs for LocalFs {
     type File = LocalFile;
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf, VfsError> {
-        fs::canonicalize(path).await.map_err(|e| {
-            if e.kind() == io::ErrorKind::NotFound {
-                VfsError::NotFound(path.to_path_buf())
-            } else if e.kind() == io::ErrorKind::PermissionDenied {
-                VfsError::PermissionDenied(path.to_path_buf())
-            } else {
-                VfsError::IoError(e)
-            }
-        })
+        fs::canonicalize(path).await.map_err(|e| map_io_err(e, path))
     }
 
     async fn metadata(&self, path: &Path) -> Result<VfsMetadata, VfsError> {
         // Use symlink_metadata to NOT follow symlinks
         // This is crucial for security - we need to detect symlinks before following them
-        let metadata = fs::symlink_metadata(path).await.map_err(|e| {
-            if e.kind() == io::ErrorKind::NotFound {
-                VfsError::NotFound(path.to_path_buf())
-            } else if e.kind() == io::ErrorKind::PermissionDenied {
-                VfsError::PermissionDenied(path.to_path_buf())
-            } else {
-                VfsError::IoError(e)
-            }
-        })?;
+        let metadata = fs::symlink_metadata(path)
+            .await
+            .map_err(|e| map_io_err(e, path))?;
         Ok(VfsMetadata {
             is_dir: metadata.is_dir(),
             is_file: metadata.is_file(),
@@ -160,48 +155,28 @@ impl Vfs for LocalFs {
     }
 
     async fn open(&self, path: &Path) -> Result<Self::File, VfsError> {
-        let file = fs::File::open(path).await.map_err(|e| {
-            if e.kind() == io::ErrorKind::NotFound {
-                VfsError::NotFound(path.to_path_buf())
-            } else if e.kind() == io::ErrorKind::PermissionDenied {
-                VfsError::PermissionDenied(path.to_path_buf())
-            } else {
-                VfsError::IoError(e)
-            }
-        })?;
+        let file = fs::File::open(path)
+            .await
+            .map_err(|e| map_io_err(e, path))?;
         Ok(LocalFile::new(file))
     }
 
     async fn create_dir_all(&self, path: &Path) -> Result<(), VfsError> {
-        fs::create_dir_all(path).await.map_err(|e| {
-            if e.kind() == io::ErrorKind::PermissionDenied {
-                VfsError::PermissionDenied(path.to_path_buf())
-            } else {
-                VfsError::IoError(e)
-            }
-        })
+        fs::create_dir_all(path)
+            .await
+            .map_err(|e| map_io_err(e, path))
     }
 
     async fn write(&self, path: &Path, contents: &[u8]) -> Result<(), VfsError> {
-        fs::write(path, contents).await.map_err(|e| {
-            if e.kind() == io::ErrorKind::PermissionDenied {
-                VfsError::PermissionDenied(path.to_path_buf())
-            } else {
-                VfsError::IoError(e)
-            }
-        })
+        fs::write(path, contents)
+            .await
+            .map_err(|e| map_io_err(e, path))
     }
 
     async fn read_to_string(&self, path: &Path) -> Result<String, VfsError> {
-        fs::read_to_string(path).await.map_err(|e| {
-            if e.kind() == io::ErrorKind::NotFound {
-                VfsError::NotFound(path.to_path_buf())
-            } else if e.kind() == io::ErrorKind::PermissionDenied {
-                VfsError::PermissionDenied(path.to_path_buf())
-            } else {
-                VfsError::IoError(e)
-            }
-        })
+        fs::read_to_string(path)
+            .await
+            .map_err(|e| map_io_err(e, path))
     }
 }
 

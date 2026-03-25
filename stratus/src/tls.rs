@@ -8,13 +8,12 @@
 //! - Client certificate verification (mTLS)
 //! - Certificate hot-reloading
 
-use crate::auth::mtls::PeerCertificate;
+use crate::auth::PeerCertificate;
 use crate::config::{ClientCertMode, TlsConfig, TlsVersion};
 use axum_server::accept::Accept;
 use axum_server::tls_rustls::{RustlsAcceptor, RustlsConfig};
 use eyre::{Result, eyre};
 use http::Request;
-use notify::{Event, EventKind, RecursiveMode, Watcher as NotifyWatcher};
 use rustls::ServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::WebPkiClientVerifier;
@@ -25,7 +24,6 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
 use tower::Service;
@@ -37,13 +35,11 @@ use tracing::{error, info};
 /// - TLS version enforcement based on `config.min_version`
 /// - ALPN protocols (`h2`, `http/1.1`)
 /// - Optional client certificate verification for mTLS
-pub async fn configure_rustls(config: &TlsConfig) -> Result<RustlsConfig> {
+pub fn configure_rustls(config: &TlsConfig) -> Result<RustlsConfig> {
     validate_tls_files(&config.cert_file, &config.key_file)?;
 
     let server_config = build_server_config(config)?;
-    RustlsConfig::from_config(Arc::new(server_config))
-        .await
-        .map_err(|e| eyre!("Failed to build RustlsConfig: {}", e))
+    Ok(RustlsConfig::from_config(Arc::new(server_config)))
 }
 
 /// Build the underlying `rustls::ServerConfig`.
@@ -101,9 +97,10 @@ pub fn build_server_config(config: &TlsConfig) -> Result<ServerConfig> {
 
 /// Return the set of supported TLS protocol versions based on the configured minimum
 fn tls_versions(min: TlsVersion) -> &'static [&'static rustls::SupportedProtocolVersion] {
+    static TLS13_ONLY: [&rustls::SupportedProtocolVersion; 1] = [&rustls::version::TLS13];
     match min {
         TlsVersion::V1_2 => rustls::DEFAULT_VERSIONS, // TLS 1.2 and 1.3
-        TlsVersion::V1_3 => &[&rustls::version::TLS13],
+        TlsVersion::V1_3 => &TLS13_ONLY,
     }
 }
 
@@ -133,7 +130,7 @@ fn load_private_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
 
 /// Start watching TLS certificate and key files for changes and reload them automatically.
 ///
-/// Uses the same debounced watcher pattern as the user database hot-reloader.
+/// Delegates to the shared `watcher::start_file_watcher` utility.
 /// On change, rebuilds the full `ServerConfig` and calls `RustlsConfig::reload_from_config()`.
 /// If the reload fails, the existing configuration is kept (fail-safe).
 pub fn start_cert_watcher(
@@ -145,16 +142,16 @@ pub fn start_cert_watcher(
         tls_config.cert_file, tls_config.key_file
     );
 
-    let cert_path: PathBuf = tls_config
+    let cert_path = tls_config
         .cert_file
         .canonicalize()
         .unwrap_or_else(|_| tls_config.cert_file.clone());
-    let key_path: PathBuf = tls_config
+    let key_path = tls_config
         .key_file
         .canonicalize()
         .unwrap_or_else(|_| tls_config.key_file.clone());
 
-    // Watch the parent directories (individual files can be unreliable)
+    // Watch parent directories rather than individual files (more reliable on Linux)
     let cert_parent = cert_path
         .parent()
         .map(PathBuf::from)
@@ -164,69 +161,25 @@ pub fn start_cert_watcher(
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Event>(100);
-
-    let tx_clone = tx.clone();
-    let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
-        if let Ok(event) = res {
-            let _ = tx_clone.blocking_send(event);
-        }
-    })?;
-
-    watcher.watch(&cert_parent, RecursiveMode::NonRecursive)?;
-    // Only watch key_parent separately if it's different from cert_parent
-    if key_parent != cert_parent {
-        watcher.watch(&key_parent, RecursiveMode::NonRecursive)?;
-    }
-
     info!("TLS cert watcher started");
 
-    tokio::spawn(async move {
-        let _watcher = watcher;
-        let debounce_duration = Duration::from_millis(500);
-        let mut debounce_timer: Option<tokio::time::Instant> = None;
-
-        loop {
-            tokio::select! {
-                Some(event) = rx.recv() => {
-                    let relevant = event.paths.iter().any(|p| {
-                        let canonical = p.canonicalize().unwrap_or_else(|_| p.clone());
-                        canonical == cert_path
-                            || canonical == key_path
-                            || p.file_name() == cert_path.file_name()
-                            || p.file_name() == key_path.file_name()
-                    });
-
-                    if relevant && matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
-                        debounce_timer = Some(tokio::time::Instant::now() + debounce_duration);
-                    }
+    crate::watcher::start_file_watcher(
+        vec![cert_path, key_path],
+        vec![cert_parent, key_parent],
+        move || {
+            info!("TLS cert/key file changed, reloading...");
+            match build_server_config(&tls_config) {
+                Ok(new_config) => {
+                    rustls_config.reload_from_config(Arc::new(new_config));
+                    info!("TLS certificates reloaded successfully");
                 }
-                _ = async {
-                    if let Some(deadline) = debounce_timer {
-                        tokio::time::sleep_until(deadline).await;
-                    } else {
-                        std::future::pending::<()>().await;
-                    }
-                }, if debounce_timer.is_some() => {
-                    debounce_timer = None;
-                    info!("TLS cert/key file changed, reloading...");
-
-                    match build_server_config(&tls_config) {
-                        Ok(new_config) => {
-                            rustls_config.reload_from_config(Arc::new(new_config));
-                            info!("TLS certificates reloaded successfully");
-                        }
-                        Err(e) => {
-                            error!("Failed to reload TLS certificates: {}", e);
-                            error!("Keeping existing TLS configuration");
-                        }
-                    }
+                Err(e) => {
+                    error!("Failed to reload TLS certificates: {}", e);
+                    error!("Keeping existing TLS configuration");
                 }
             }
-        }
-    });
-
-    Ok(())
+        },
+    )
 }
 
 // ── mTLS acceptor ──────────────────────────────────────────────────────────
@@ -367,8 +320,8 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
-    async fn test_configure_rustls_with_invalid_files() {
+    #[test]
+    fn test_configure_rustls_with_invalid_files() {
         let config = crate::config::TlsConfig {
             cert_file: PathBuf::from("/nonexistent/cert.pem"),
             key_file: PathBuf::from("/nonexistent/key.pem"),
@@ -376,9 +329,13 @@ mod tests {
             ocsp_stapling: true,
             client_cert_mode: crate::config::ClientCertMode::None,
             client_ca_file: None,
+            auto_generate: false,
+            auto_generate_cn: String::new(),
+            auto_generate_san: vec![],
+            auto_generate_validity_days: 365,
         };
 
-        let result = configure_rustls(&config).await;
+        let result = configure_rustls(&config);
         assert!(result.is_err());
     }
 
