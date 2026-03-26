@@ -17,100 +17,6 @@ use crate::vfs::Vfs;
 /// 64 KiB balances per-chunk memory overhead against the number of read syscalls.
 const FILE_STREAM_CHUNK_BYTES: usize = 64 * 1024;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::body::to_bytes;
-    use crate::test_utils::ShareConfigBuilder;
-    use crate::vfs::backend::LocalFs;
-
-    async fn body_text(resp: Response) -> String {
-        let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        String::from_utf8(bytes.to_vec()).unwrap()
-    }
-
-    #[tokio::test]
-    async fn test_serve_file_full() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("hello.txt");
-        std::fs::write(&path, "hello world").unwrap();
-        let vfs = LocalFs::new();
-        let cfg = ShareConfigBuilder::new(dir.path()).build();
-        let resp = serve_file(&path, &cfg, HeaderMap::new(), &vfs).await;
-        assert_eq!(resp.status(), StatusCode::OK);
-        assert_eq!(resp.headers()[header::ACCEPT_RANGES], "bytes");
-        assert_eq!(resp.headers()[header::CONTENT_LENGTH], "11");
-        assert_eq!(body_text(resp).await, "hello world");
-    }
-
-    #[tokio::test]
-    async fn test_serve_file_range_valid() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("data.bin");
-        std::fs::write(&path, "abcdefghij").unwrap(); // 10 bytes
-        let vfs = LocalFs::new();
-        let cfg = ShareConfigBuilder::new(dir.path()).build();
-        let mut headers = HeaderMap::new();
-        headers.insert(header::RANGE, "bytes=0-4".parse().unwrap());
-        let resp = serve_file(&path, &cfg, headers, &vfs).await;
-        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
-        assert_eq!(resp.headers()[header::CONTENT_LENGTH], "5");
-        assert_eq!(resp.headers()[header::CONTENT_RANGE], "bytes 0-4/10");
-        assert_eq!(body_text(resp).await, "abcde");
-    }
-
-    #[tokio::test]
-    async fn test_serve_file_range_out_of_bounds_falls_back_to_full() {
-        // Range beyond EOF → validate() fails → treated as no-range → full 200
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("small.txt");
-        std::fs::write(&path, "hi").unwrap(); // 2 bytes
-        let vfs = LocalFs::new();
-        let cfg = ShareConfigBuilder::new(dir.path()).build();
-        let mut headers = HeaderMap::new();
-        headers.insert(header::RANGE, "bytes=100-200".parse().unwrap());
-        let resp = serve_file(&path, &cfg, headers, &vfs).await;
-        assert_eq!(resp.status(), StatusCode::OK);
-        assert_eq!(body_text(resp).await, "hi");
-    }
-
-    #[tokio::test]
-    async fn test_serve_file_mime_html() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("index.html");
-        std::fs::write(&path, "<h1>hi</h1>").unwrap();
-        let vfs = LocalFs::new();
-        let cfg = ShareConfigBuilder::new(dir.path()).build();
-        let resp = serve_file(&path, &cfg, HeaderMap::new(), &vfs).await;
-        assert_eq!(resp.status(), StatusCode::OK);
-        let ct = resp.headers()[header::CONTENT_TYPE].to_str().unwrap();
-        assert!(ct.starts_with("text/html"), "expected text/html, got {ct}");
-    }
-
-    #[tokio::test]
-    async fn test_serve_file_mime_unknown_falls_back_to_octet_stream() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("data.unknownext123");
-        std::fs::write(&path, "blob").unwrap();
-        let vfs = LocalFs::new();
-        let cfg = ShareConfigBuilder::new(dir.path()).build();
-        let resp = serve_file(&path, &cfg, HeaderMap::new(), &vfs).await;
-        assert_eq!(resp.status(), StatusCode::OK);
-        let ct = resp.headers()[header::CONTENT_TYPE].to_str().unwrap();
-        assert!(ct.contains("octet-stream"), "expected octet-stream, got {ct}");
-    }
-
-    #[tokio::test]
-    async fn test_serve_file_not_found_returns_404() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("nonexistent.txt");
-        let vfs = LocalFs::new();
-        let cfg = ShareConfigBuilder::new(dir.path()).build();
-        let resp = serve_file(&path, &cfg, HeaderMap::new(), &vfs).await;
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-    }
-}
-
 /// Serve a single file from the VFS.
 ///
 /// `_share_config` is reserved for future per-share enforcement (e.g. `max_file_size`).
@@ -237,5 +143,99 @@ pub async fn serve_file<V: Vfs>(
             )
                 .into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::ShareConfigBuilder;
+    use crate::vfs::backend::LocalFs;
+
+    async fn body_text(resp: Response) -> String {
+        use axum::body::to_bytes;
+        let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_serve_file_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hello.txt");
+        std::fs::write(&path, "hello world").unwrap();
+        let vfs = LocalFs::new();
+        let cfg = ShareConfigBuilder::new(dir.path()).build();
+        let resp = serve_file(&path, &cfg, HeaderMap::new(), &vfs).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers()[header::ACCEPT_RANGES], "bytes");
+        assert_eq!(resp.headers()[header::CONTENT_LENGTH], "11");
+        assert_eq!(body_text(resp).await, "hello world");
+    }
+
+    #[tokio::test]
+    async fn test_serve_file_range_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.bin");
+        std::fs::write(&path, "abcdefghij").unwrap(); // 10 bytes
+        let vfs = LocalFs::new();
+        let cfg = ShareConfigBuilder::new(dir.path()).build();
+        let mut headers = HeaderMap::new();
+        headers.insert(header::RANGE, "bytes=0-4".parse().unwrap());
+        let resp = serve_file(&path, &cfg, headers, &vfs).await;
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(resp.headers()[header::CONTENT_LENGTH], "5");
+        assert_eq!(resp.headers()[header::CONTENT_RANGE], "bytes 0-4/10");
+        assert_eq!(body_text(resp).await, "abcde");
+    }
+
+    #[tokio::test]
+    async fn test_serve_file_range_out_of_bounds_falls_back_to_full() {
+        // Range beyond EOF → validate() fails → treated as no-range → full 200
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("small.txt");
+        std::fs::write(&path, "hi").unwrap(); // 2 bytes
+        let vfs = LocalFs::new();
+        let cfg = ShareConfigBuilder::new(dir.path()).build();
+        let mut headers = HeaderMap::new();
+        headers.insert(header::RANGE, "bytes=100-200".parse().unwrap());
+        let resp = serve_file(&path, &cfg, headers, &vfs).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_text(resp).await, "hi");
+    }
+
+    #[tokio::test]
+    async fn test_serve_file_mime_html() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.html");
+        std::fs::write(&path, "<h1>hi</h1>").unwrap();
+        let vfs = LocalFs::new();
+        let cfg = ShareConfigBuilder::new(dir.path()).build();
+        let resp = serve_file(&path, &cfg, HeaderMap::new(), &vfs).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp.headers()[header::CONTENT_TYPE].to_str().unwrap();
+        assert!(ct.starts_with("text/html"), "expected text/html, got {ct}");
+    }
+
+    #[tokio::test]
+    async fn test_serve_file_mime_unknown_falls_back_to_octet_stream() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.unknownext123");
+        std::fs::write(&path, "blob").unwrap();
+        let vfs = LocalFs::new();
+        let cfg = ShareConfigBuilder::new(dir.path()).build();
+        let resp = serve_file(&path, &cfg, HeaderMap::new(), &vfs).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp.headers()[header::CONTENT_TYPE].to_str().unwrap();
+        assert!(ct.contains("octet-stream"), "expected octet-stream, got {ct}");
+    }
+
+    #[tokio::test]
+    async fn test_serve_file_not_found_returns_404() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nonexistent.txt");
+        let vfs = LocalFs::new();
+        let cfg = ShareConfigBuilder::new(dir.path()).build();
+        let resp = serve_file(&path, &cfg, HeaderMap::new(), &vfs).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 }

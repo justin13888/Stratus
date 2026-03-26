@@ -498,7 +498,6 @@ mod tests {
     use std::collections::HashMap;
 
     use axum::{Router, body::Body, routing::get};
-    use axum::body::to_bytes;
     use http::{Request, StatusCode};
     use tower::ServiceExt;
 

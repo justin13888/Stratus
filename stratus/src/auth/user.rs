@@ -131,25 +131,6 @@ impl UserStore {
         Ok(Self { users: db.users })
     }
 
-    /// Add a user to the store
-    #[allow(dead_code)]
-    pub fn add_user(
-        &mut self,
-        username: String,
-        password_hash: String,
-        groups: Vec<String>,
-        metadata: HashMap<String, String>,
-    ) {
-        self.users.insert(
-            username,
-            UserEntry {
-                password_hash,
-                groups,
-                metadata,
-            },
-        );
-    }
-
     /// Verify a user's password and return a User object if valid
     ///
     /// Always performs an Argon2 hash computation, even when the username does not exist,
@@ -192,12 +173,6 @@ impl UserStore {
         })
     }
 
-    /// Check if a user exists in the store
-    #[allow(dead_code)]
-    pub fn contains_user(&self, username: &str) -> bool {
-        self.users.contains_key(username)
-    }
-
     /// Get the number of users in the store
     pub fn len(&self) -> usize {
         self.users.len()
@@ -213,6 +188,28 @@ impl Default for UserStore {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[cfg(test)]
+impl UserStore {
+    /// Add a user to the store (test helper only)
+    pub fn add_user(
+        &mut self,
+        username: String,
+        password_hash: String,
+        groups: Vec<String>,
+        metadata: HashMap<String, String>,
+    ) {
+        self.users.insert(
+            username,
+            UserEntry {
+                password_hash,
+                groups,
+                metadata,
+            },
+        );
+    }
+
 }
 
 /// Thread-safe user store wrapper that supports hot-reloading

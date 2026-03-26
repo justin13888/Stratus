@@ -194,11 +194,13 @@ impl SecurityConfigBuilder {
         self
     }
 
+    #[allow(dead_code)]
     pub fn auth_method(mut self, method: AuthMethod) -> Self {
         self.auth_method = method;
         self
     }
 
+    #[allow(dead_code)]
     pub fn user_db_file(mut self, path: impl Into<PathBuf>) -> Self {
         self.user_db_file = Some(path.into());
         self
@@ -264,6 +266,7 @@ impl NetworkConfigBuilder {
         self
     }
 
+    #[allow(dead_code)]
     pub fn tcp_keepalive(mut self, enabled: bool) -> Self {
         self.tcp_keepalive = enabled;
         self

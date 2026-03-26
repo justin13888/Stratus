@@ -236,7 +236,7 @@ pub struct LoggingConfig {
     #[serde(default)]
     pub file: Option<PathBuf>,
 
-    /// Enable access logging (not yet implemented — reserved for future use)
+    /// Enable per-request access logging (method, URI, status, duration, client IP)
     #[serde(default = "default_false")]
     pub access_log: bool,
 }
@@ -404,6 +404,7 @@ pub struct ShareConfig {
     pub enabled: bool,
 
     /// Whether the share is browseable/listable
+    /// TODO: Wire up — check this flag in serve_share() before calling serve_directory_listing()
     #[serde(default = "default_true")]
     pub browseable: bool,
 
@@ -460,10 +461,12 @@ pub struct ShareConfig {
     pub max_file_size: u64,
 
     /// Enable file locking
+    /// TODO: Wire up — implement advisory locks on write operations (open for write, upload, delete)
     #[serde(default = "default_true")]
     pub file_locking: bool,
 
     /// Custom mount point/URL path (defaults to share name)
+    /// TODO: Wire up — register share routes under mount_point instead of the share name key
     #[serde(default)]
     pub mount_point: Option<String>,
 }

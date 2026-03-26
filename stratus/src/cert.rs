@@ -163,7 +163,7 @@ mod tests {
 
         let result = maybe_generate_cert(&config);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
     }
 
     #[test]
@@ -187,7 +187,7 @@ mod tests {
 
         let result = maybe_generate_cert(&config);
         assert!(result.is_ok(), "maybe_generate_cert failed: {:?}", result);
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
         assert!(cert_path.exists());
         assert!(key_path.exists());
     }
@@ -217,7 +217,7 @@ mod tests {
 
         let result = maybe_generate_cert(&config);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), false); // Should NOT regenerate
+        assert!(!result.unwrap()); // Should NOT regenerate
 
         // Files should still have original content
         assert_eq!(std::fs::read_to_string(&cert_path).unwrap(), "existing cert");

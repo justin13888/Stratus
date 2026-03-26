@@ -1,6 +1,6 @@
 # Stratus Server Configuration
 # This is an example configuration file showing all available options
-# 
+#
 # Implementation Status:
 # ✅ = Fully implemented and working
 # ⚠️  = Partially implemented (loaded but not fully applied)
@@ -31,13 +31,13 @@ key_file = "key.pem"
 # Minimum TLS version ("1.2" or "1.3") ⚠️ (loaded but not enforced - axum-server limitation)
 min_version = "1.3"
 
-# Enable OCSP stapling ⚠️ (loaded but not implemented)
+# Enable OCSP stapling ❌ (loaded but not implemented)
 ocsp_stapling = true
 
-# Client certificate authentication mode: "none", "optional", "required" ⚠️ (loaded but not implemented)
+# Client certificate authentication mode: "none", "optional", "required" ⚠️ (loaded but not enforced at TLS layer - use auth_method = "mutual_tls" to enable mTLS auth)
 client_cert_mode = "none"
 
-# Path to client CA certificate file (for client cert verification) ⚠️ (loaded but not implemented)
+# Path to client CA certificate file (for client cert verification) ⚠️ (loaded but not enforced at TLS layer)
 # client_ca_file = "client_ca.pem"
 
 # Note: HTTP/2 configuration has been removed as axum-server doesn't expose these settings
@@ -51,7 +51,7 @@ level = "info"
 # Enables daily rotating file logs when specified
 # file = "/var/log/stratus/server.log"
 
-# Enable access logging ⚠️ (loaded but not implemented)
+# Enable per-request access logging (method, URI, status, duration, client IP) ✅
 # access_log = true
 
 [metrics]
@@ -64,7 +64,7 @@ endpoint = "/metrics"
 # Optional: Run metrics on a separate HTTP server (no TLS) ✅
 # If you specify a different bind_address or port (or both), metrics will be served on a separate server.
 # - If only bind_address is specified, the main server's port will be used
-# - If only port is specified, the main server's bind_address will be used  
+# - If only port is specified, the main server's bind_address will be used
 # - If both are the same as the main server, metrics will be served on the main server
 # This is useful for isolating metrics traffic and simplifying Prometheus configuration
 # bind_address = "127.0.0.1"   # Defaults to main server's bind_address if not specified
@@ -82,27 +82,27 @@ endpoint = "/metrics"
 # Request timeout (seconds) ✅ (enforced on all requests)
 # request_timeout = 30
 
-# Maximum request body size (bytes) ❌ (loaded but not enforced)
-# # Default: 100MB
+# Maximum request body size (bytes) ✅ (enforced via tower-http RequestBodyLimitLayer)
+# Default: 100MB
 # max_request_size = 104857600
 
-# Enable TCP keepalive ⚠️ (loaded but not set - requires socket2 crate)
+# Enable TCP keepalive ✅
 # tcp_keepalive = true
 
-# TCP keepalive interval (seconds) ⚠️ (loaded but not set - requires socket2 crate)
+# TCP keepalive interval (seconds) ✅
 # tcp_keepalive_interval = 60
 
-# Enable TCP nodelay (disable Nagle's algorithm) ⚠️ (loaded but not set - requires socket2 crate)
+# Enable TCP nodelay (disable Nagle's algorithm) ✅
 # tcp_nodelay = true
 
-# Listen backlog size ⚠️ (loaded but not set - requires socket2 crate)
+# Listen backlog size ✅
 # listen_backlog = 1024
 
 [security]
 # Enable authentication ✅
 auth_required = true
 
-# Authentication method: "basic", "bearer", "mutual_tls" ✅ (basic auth implemented)
+# Authentication method: "basic", "mutual_tls" ✅ (basic auth and mTLS both implemented)
 auth_method = "basic"
 
 # Path to user database file (format depends on auth_method) ✅ (TOML format for basic auth)
@@ -116,33 +116,32 @@ user_db_file = "users.toml"
 # CORS allowed origins (empty = all origins) ⚠️ (loaded but specific origins not implemented, uses permissive)
 # cors_allowed_origins = []
 
-# Enable rate limiting ❌ (loaded but not implemented)
+# Enable rate limiting ✅ (per-IP token bucket via governor)
 # rate_limiting_enabled = false
 
-# Rate limit: requests per minute per IP ❌ (loaded but not implemented)
+# Rate limit: requests per minute per IP ✅
 # rate_limit = 60
 
 # Enable compression ✅
 # compression_enabled = true
 
-# Compression algorithms: "gzip", "zstd", "br" ⚠️ (loaded but can't select specific algorithms - tower-http limitation)
+# Compression algorithms: "gzip", "zstd", "br" ✅ (all three algorithms individually configurable)
 # compression_algorithms = ["gzip", "zstd"]
 
-# Minimum size for compression (bytes) ⚠️ (loaded but not configurable - tower-http limitation)
+# Minimum size for compression (bytes) ✅ (responses smaller than this are not compressed)
 # compression_min_size = 1024
 
 # Directory Shares Configuration
 # Similar to Samba, each share is defined as [shares.<name>]
 # The share name becomes the default mount point unless overridden
-# ⚠️ Share routing partially implemented - mount points determined but file serving not yet implemented
 
 [shares.test]
-desceription = "Test share for development"
+description = "Test share for development"
 path = "./test"                             # ✅ Path validated on startup
 enabled = true                              # ✅ Disabled shares are filtered out
-browseable = true                           # ❌ Not implemented
-read_only = false                           # ❌ Not implemented
-guest_ok = true                             # ❌ Not implemented
+browseable = true                           # ❌ Not yet wired (directory listing always shown)
+read_only = false                           # ✅ Enforced on upload and delete operations
+guest_ok = true                             # ✅ Unauthenticated users get read-only access
 
 # [shares.public]
 # # Human-readable description
@@ -168,7 +167,7 @@ guest_ok = true                             # ❌ Not implemented
 # # 4. read_list (grants read-only access)
 # # 5. If all lists are empty, all authenticated users get default access
 # #    (read/write if not read_only, read-only if read_only)
-# # 
+# #
 # # Groups can be specified as: "groupname", "@groupname", or "+groupname"
 # # Examples: ["alice", "bob", "@developers", "+admins"]
 
@@ -214,10 +213,10 @@ guest_ok = true                             # ❌ Not implemented
 # # Maximum file size allowed for upload (bytes, 0 = unlimited)
 # max_file_size = 0
 
-# # Enable file locking
+# # Enable file locking ❌ (loaded but not yet implemented)
 # file_locking = true
 
-# # Custom mount point/URL path (defaults to share name)
+# # Custom mount point/URL path (defaults to share name) ❌ (loaded but not yet implemented)
 # # mount_point = "/custom-path"
 
 # [shares.media]
