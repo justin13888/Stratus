@@ -202,3 +202,23 @@ pub fn increment_connections() {
 pub fn decrement_connections() {
     gauge!("active_connections").decrement(1.0);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_record_file_operation_does_not_panic() {
+        record_file_operation("read_metadata", Duration::from_millis(5));
+        record_file_operation("open", Duration::from_millis(1));
+        record_file_operation("read_directory", Duration::from_micros(200));
+    }
+
+    #[test]
+    fn test_record_share_request_does_not_panic() {
+        record_share_request("test_share", 1024, true);
+        record_share_request("test_share", 0, false);
+        record_share_request("other_share", 512, true);
+    }
+}

@@ -326,7 +326,7 @@ mod tests {
             cert_file: PathBuf::from("/nonexistent/cert.pem"),
             key_file: PathBuf::from("/nonexistent/key.pem"),
             min_version: crate::config::TlsVersion::V1_3,
-            ocsp_stapling: true,
+            ocsp_stapling: false,
             client_cert_mode: crate::config::ClientCertMode::None,
             client_ca_file: None,
             auto_generate: false,

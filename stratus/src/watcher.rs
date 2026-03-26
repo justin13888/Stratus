@@ -96,3 +96,74 @@ pub fn start_file_watcher(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn test_watcher_triggers_callback_on_file_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let watched = dir.path().join("watched.toml");
+        std::fs::write(&watched, "initial").unwrap();
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let cc = Arc::clone(&call_count);
+
+        start_file_watcher(
+            vec![watched.clone()],
+            vec![dir.path().to_path_buf()],
+            move || {
+                cc.fetch_add(1, Ordering::SeqCst);
+            },
+        )
+        .unwrap();
+
+        // Modify the file and wait past the debounce window
+        std::fs::write(&watched, "changed").unwrap();
+        tokio::time::sleep(Duration::from_millis(WATCHER_DEBOUNCE_MS + 300)).await;
+
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "callback should be called exactly once"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_watcher_debounce_collapses_rapid_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let watched = dir.path().join("config.toml");
+        std::fs::write(&watched, "v0").unwrap();
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let cc = Arc::clone(&call_count);
+
+        start_file_watcher(
+            vec![watched.clone()],
+            vec![dir.path().to_path_buf()],
+            move || {
+                cc.fetch_add(1, Ordering::SeqCst);
+            },
+        )
+        .unwrap();
+
+        // Write several times in quick succession within the debounce window
+        for i in 1..=4 {
+            std::fs::write(&watched, format!("v{i}")).unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        // Wait for debounce to settle
+        tokio::time::sleep(Duration::from_millis(WATCHER_DEBOUNCE_MS + 300)).await;
+
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "rapid writes should be debounced into a single callback"
+        );
+    }
+}

@@ -91,6 +91,9 @@ pub enum ConfigError {
 
     #[error("Invalid HTTP/2 configuration: {0}")]
     InvalidHttp2Config(String),
+
+    #[error("Share '{share}' has unsupported option enabled: {reason}")]
+    UnsupportedShareOption { share: String, reason: &'static str },
 }
 
 #[cfg(test)]

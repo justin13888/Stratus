@@ -3,6 +3,7 @@
 //! Provides self-signed certificate generation for development and initial setup
 //! using the `rcgen` crate.
 
+use chrono::Datelike;
 use eyre::{Result, eyre};
 use rcgen::{CertificateParams, DnType, KeyPair, SanType};
 use std::net::IpAddr;
@@ -48,7 +49,8 @@ pub fn generate_self_signed(
     }
 
     // Set validity period
-    let now = rcgen::date_time_ymd(2024, 1, 1);
+    let today = chrono::Utc::now();
+    let now = rcgen::date_time_ymd(today.year(), today.month() as u8, today.day() as u8);
     let not_after = now
         + std::time::Duration::from_secs(u64::from(validity_days) * 86400);
     params.not_before = now;

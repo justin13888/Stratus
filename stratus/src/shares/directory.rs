@@ -192,3 +192,94 @@ async fn read_directory_entries<V: Vfs>(
 
     Ok(entries)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+    use crate::test_utils::ShareConfigBuilder;
+    use crate::vfs::backend::LocalFs;
+
+    async fn body_text(resp: Response) -> String {
+        let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_serve_directory_basic() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("alpha.txt"), "a").unwrap();
+        std::fs::write(dir.path().join("beta.txt"), "b").unwrap();
+        let cfg = ShareConfigBuilder::new(dir.path()).build();
+        let vfs = LocalFs::new();
+        let resp = serve_directory_listing(
+            "share", "", dir.path(), &cfg, cache_dir.path(), dir.path(), &vfs,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_text(resp).await;
+        assert!(body.contains("alpha.txt"), "expected alpha.txt in listing");
+        assert!(body.contains("beta.txt"), "expected beta.txt in listing");
+    }
+
+    #[tokio::test]
+    async fn test_serve_directory_hide_dot_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".hidden"), "secret").unwrap();
+        std::fs::write(dir.path().join("visible.txt"), "public").unwrap();
+        let cfg = ShareConfigBuilder::new(dir.path()).hide_dot_files(true).build();
+        let vfs = LocalFs::new();
+        let resp = serve_directory_listing(
+            "share", "", dir.path(), &cfg, cache_dir.path(), dir.path(), &vfs,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_text(resp).await;
+        assert!(!body.contains(".hidden"), ".hidden should be absent");
+        assert!(body.contains("visible.txt"), "visible.txt should appear");
+    }
+
+    #[tokio::test]
+    async fn test_serve_directory_exclude_pattern() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("keep.txt"), "a").unwrap();
+        std::fs::write(dir.path().join("remove.tmp"), "b").unwrap();
+        let cfg = ShareConfigBuilder::new(dir.path())
+            .with_exclude_patterns(vec!["*.tmp"])
+            .build();
+        let vfs = LocalFs::new();
+        let resp = serve_directory_listing(
+            "share", "", dir.path(), &cfg, cache_dir.path(), dir.path(), &vfs,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_text(resp).await;
+        assert!(body.contains("keep.txt"), "keep.txt should appear");
+        assert!(!body.contains("remove.tmp"), "remove.tmp should be excluded");
+    }
+
+    #[tokio::test]
+    async fn test_serve_directory_sort_dirs_before_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("zzz_file.txt"), "f").unwrap();
+        std::fs::create_dir(dir.path().join("aaa_subdir")).unwrap();
+        let cfg = ShareConfigBuilder::new(dir.path()).build();
+        let vfs = LocalFs::new();
+        let resp = serve_directory_listing(
+            "share", "", dir.path(), &cfg, cache_dir.path(), dir.path(), &vfs,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_text(resp).await;
+        let dir_pos = body.find("aaa_subdir").unwrap_or(usize::MAX);
+        let file_pos = body.find("zzz_file.txt").unwrap_or(usize::MAX);
+        assert!(
+            dir_pos < file_pos,
+            "directory should appear before file in listing"
+        );
+    }
+}

@@ -3,8 +3,12 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::time::Duration;
 
+use axum::extract::State;
 use axum::http::StatusCode;
-use axum::{Router, routing::get};
+use axum::response::IntoResponse;
+use axum::{Json, Router, routing::get};
+use std::path::PathBuf;
+use std::sync::Arc;
 use axum_server::Handle;
 use eyre::{Result, eyre};
 use listenfd::ListenFd;
@@ -354,8 +358,20 @@ fn build_app(
         .route("/shares/{*path}", get(shares::serve_share))
         .with_state(share_state);
 
+    // Build health state: paths of enabled shares to probe
+    let health_share_paths: Arc<Vec<(String, PathBuf)>> = Arc::new(
+        shares
+            .iter()
+            .filter(|(_, cfg)| cfg.enabled)
+            .map(|(name, cfg)| (name.clone(), cfg.path.clone()))
+            .collect(),
+    );
+
     // Create base router with health and index endpoints
-    let mut app = Router::new().route("/health", get(health_handler));
+    let health_router = Router::new()
+        .route("/health", get(health_handler))
+        .with_state(health_share_paths);
+    let mut app = health_router;
 
     // Add metrics endpoint if enabled and NOT using separate server
     if metrics_config.enabled
@@ -424,10 +440,41 @@ fn build_app(
     Ok(app)
 }
 
-// TODO: Add unit tests to verify share endpoints expose compression headers &&
+// TODO: Add unit tests to verify share endpoints expose compression headers
 
-async fn health_handler() -> StatusCode {
-    StatusCode::OK // TODO: Check actual health status
+#[derive(serde::Serialize)]
+struct HealthResponse {
+    status: &'static str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unavailable_shares: Vec<String>,
+}
+
+async fn health_handler(
+    State(share_paths): State<Arc<Vec<(String, PathBuf)>>>,
+) -> impl IntoResponse {
+    let mut unavailable = Vec::new();
+    for (name, path) in share_paths.as_ref() {
+        if tokio::fs::metadata(path).await.is_err() {
+            unavailable.push(name.clone());
+        }
+    }
+    if unavailable.is_empty() {
+        (
+            StatusCode::OK,
+            Json(HealthResponse {
+                status: "ok",
+                unavailable_shares: vec![],
+            }),
+        )
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(HealthResponse {
+                status: "degraded",
+                unavailable_shares: unavailable,
+            }),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -442,21 +489,40 @@ mod tests {
     use super::*;
 
     // Helper to create a test app
-    fn test_app() -> Router {
+    fn test_app(share_paths: Vec<(String, PathBuf)>) -> Router {
         Router::new()
             .route("/health", get(health_handler))
+            .with_state(Arc::new(share_paths))
             .layer(RequestDecompressionLayer::new())
             .layer(CompressionLayer::new())
             .layer(CorsLayer::permissive())
     }
 
     #[tokio::test]
-    async fn test_health_endpoint() {
+    async fn test_health_endpoint_no_shares() {
         let request = http::Request::get("/health").body(Body::empty()).unwrap();
-
-        let response = test_app().oneshot(request).await.unwrap();
-
+        let response = test_app(vec![]).oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_health_endpoint_with_accessible_share() {
+        let dir = tempfile::tempdir().unwrap();
+        let share_paths = vec![("test".to_string(), dir.path().to_path_buf())];
+        let request = http::Request::get("/health").body(Body::empty()).unwrap();
+        let response = test_app(share_paths).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_health_endpoint_with_missing_share() {
+        let share_paths = vec![(
+            "missing".to_string(),
+            PathBuf::from("/nonexistent/path/that/does/not/exist"),
+        )];
+        let request = http::Request::get("/health").body(Body::empty()).unwrap();
+        let response = test_app(share_paths).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }
 // TODO: Add unit testing for all config implementations

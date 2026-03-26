@@ -1,5 +1,7 @@
 pub use state::ShareState;
 
+use std::sync::Arc;
+
 use axum::{
     extract::{Path, Request, State},
     http::StatusCode,
@@ -74,6 +76,18 @@ pub async fn serve_share<V: Vfs>(
         user.map(|u| &u.username),
         share_name
     );
+
+    // Enforce per-share connection limit (holds the permit for the duration of this handler)
+    let _permit = if let Some(sem) = state.semaphores.get(share_name) {
+        match Arc::clone(sem).acquire_owned().await {
+            Ok(permit) => Some(permit),
+            Err(_) => {
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+        }
+    } else {
+        None
+    };
 
     // Construct the full filesystem path
     let requested_path = state.vfs.join(&share_config.path, file_path);
@@ -188,4 +202,151 @@ pub async fn serve_share<V: Vfs>(
     crate::metrics::record_share_request(share_name, bytes_served, response.status().is_success());
 
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use axum::{Router, body::Body, routing::get};
+    use http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    use super::*;
+    use crate::auth::{AuthenticatedUser, User};
+    use crate::test_utils::ShareConfigBuilder;
+    use crate::vfs::backend::LocalFs;
+
+    fn make_router(shares: HashMap<String, crate::config::ShareConfig>, cache_dir: std::path::PathBuf) -> Router {
+        let vfs = LocalFs::new();
+        let state = ShareState::new(shares, cache_dir, vfs);
+        Router::new()
+            .route("/shares/{*path}", get(serve_share::<LocalFs>))
+            .with_state(state)
+    }
+
+    #[tokio::test]
+    async fn test_serve_share_not_found() {
+        let cache = tempfile::tempdir().unwrap();
+        let router = make_router(HashMap::new(), cache.path().to_path_buf());
+        let req = Request::get("/shares/noexist/file.txt").body(Body::empty()).unwrap();
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_serve_share_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let mut shares = HashMap::new();
+        shares.insert(
+            "myshare".to_string(),
+            ShareConfigBuilder::new(dir.path()).enabled(false).build(),
+        );
+        let router = make_router(shares, cache.path().to_path_buf());
+        let req = Request::get("/shares/myshare/").body(Body::empty()).unwrap();
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_serve_share_guest_ok_anonymous_access() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hello.txt"), "hello").unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let mut shares = HashMap::new();
+        shares.insert(
+            "pub".to_string(),
+            ShareConfigBuilder::new(dir.path()).guest_ok(true).build(),
+        );
+        let router = make_router(shares, cache.path().to_path_buf());
+        let req = Request::get("/shares/pub/hello.txt").body(Body::empty()).unwrap();
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_serve_share_auth_required_no_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let mut shares = HashMap::new();
+        shares.insert(
+            "private".to_string(),
+            ShareConfigBuilder::new(dir.path()).guest_ok(false).build(),
+        );
+        let router = make_router(shares, cache.path().to_path_buf());
+        let req = Request::get("/shares/private/").body(Body::empty()).unwrap();
+        let resp = router.oneshot(req).await.unwrap();
+        // No user in extensions, guest_ok=false → Forbidden (no auth middleware in test stack)
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_serve_share_authenticated_user_read_access() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("secret.txt"), "data").unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let mut shares = HashMap::new();
+        shares.insert(
+            "restricted".to_string(),
+            ShareConfigBuilder::new(dir.path())
+                .guest_ok(false)
+                .with_read_access(vec!["alice"])
+                .build(),
+        );
+        let router = make_router(shares, cache.path().to_path_buf());
+        let mut req = Request::get("/shares/restricted/secret.txt")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(AuthenticatedUser(User::new("alice".to_string())));
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_serve_share_symlink_outside_share_denied() {
+        let share_dir = tempfile::tempdir().unwrap();
+        let target_dir = tempfile::tempdir().unwrap();
+        std::fs::write(target_dir.path().join("secret.txt"), "outside").unwrap();
+        // Create a symlink inside share pointing outside
+        let link_path = share_dir.path().join("link");
+        std::os::unix::fs::symlink(target_dir.path(), &link_path).unwrap();
+
+        let cache = tempfile::tempdir().unwrap();
+        let mut shares = HashMap::new();
+        shares.insert(
+            "share".to_string(),
+            ShareConfigBuilder::new(share_dir.path())
+                .guest_ok(true)
+                .follow_symlinks(false)
+                .build(),
+        );
+        let router = make_router(shares, cache.path().to_path_buf());
+        let req = Request::get("/shares/share/link/secret.txt")
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_serve_share_directory_listing() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("readme.md"), "# hi").unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let mut shares = HashMap::new();
+        shares.insert(
+            "docs".to_string(),
+            ShareConfigBuilder::new(dir.path()).guest_ok(true).build(),
+        );
+        let router = make_router(shares, cache.path().to_path_buf());
+        // Request the share root (directory)
+        let req = Request::get("/shares/docs/").body(Body::empty()).unwrap();
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp.headers()[axum::http::header::CONTENT_TYPE]
+            .to_str()
+            .unwrap();
+        assert!(ct.contains("text/html"), "expected HTML directory listing, got {ct}");
+    }
 }

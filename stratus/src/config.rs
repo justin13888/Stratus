@@ -70,7 +70,6 @@ impl std::fmt::Display for LogLevel {
 pub enum AuthMethod {
     #[default]
     Basic,
-    Bearer,
     MutualTls,
 }
 
@@ -167,8 +166,8 @@ pub struct TlsConfig {
     #[serde(default)]
     pub min_version: TlsVersion,
 
-    /// Enable OCSP stapling
-    #[serde(default = "default_true")]
+    /// Enable OCSP stapling (not yet implemented — reserved for future use)
+    #[serde(default = "default_false")]
     pub ocsp_stapling: bool,
 
     /// Client certificate authentication mode
@@ -237,8 +236,8 @@ pub struct LoggingConfig {
     #[serde(default)]
     pub file: Option<PathBuf>,
 
-    /// Enable access logging
-    #[serde(default = "default_true")]
+    /// Enable access logging (not yet implemented — reserved for future use)
+    #[serde(default = "default_false")]
     pub access_log: bool,
 }
 
@@ -703,7 +702,7 @@ impl ServerConfig {
             }
         }
 
-        // Validate share paths exist
+        // Validate share paths exist and reject unimplemented options
         for (name, share) in &self.shares {
             if !share.path.exists() {
                 return Err(ConfigError::SharePathNotFound {
@@ -715,6 +714,12 @@ impl ServerConfig {
                 return Err(ConfigError::SharePathNotDirectory {
                     share: name.clone(),
                     path: share.path.clone(),
+                });
+            }
+            if share.versioning {
+                return Err(ConfigError::UnsupportedShareOption {
+                    share: name.clone(),
+                    reason: "versioning is not yet implemented",
                 });
             }
         }

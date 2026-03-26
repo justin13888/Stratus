@@ -7,6 +7,8 @@ mod user;
 mod watcher;
 
 pub use middleware::{AuthMiddleware, get_authenticated_user};
+#[cfg(test)]
+pub use middleware::AuthenticatedUser;
 pub use mtls::PeerCertificate;
 pub use provider::AuthProvider;
 pub use rate_limit::AuthRateLimiter;
@@ -73,11 +75,6 @@ pub fn create_auth_provider(
             }
 
             Ok(Arc::new(provider))
-        }
-        AuthMethod::Bearer => {
-            // Placeholder for future JWT/Bearer implementation
-            // TODO
-            eyre::bail!("Bearer token authentication not yet implemented")
         }
         AuthMethod::MutualTls => {
             // mTLS: TLS-layer cert verification is handled by rustls (ClientCertMode::Required).
