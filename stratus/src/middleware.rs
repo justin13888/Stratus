@@ -64,6 +64,9 @@ pub struct MiddlewareConfig {
 
     // Server identification
     pub server_name: String,
+
+    // Logging
+    pub access_log_enabled: bool,
 }
 
 impl MiddlewareConfig {
@@ -72,6 +75,7 @@ impl MiddlewareConfig {
         security: &config::SecurityConfig,
         network: &config::NetworkConfig,
         metrics: &config::MetricsConfig,
+        logging: &config::LoggingConfig,
         server_name: &str,
     ) -> Self {
         Self {
@@ -94,6 +98,7 @@ impl MiddlewareConfig {
             max_request_size: network.max_request_size,
             metrics_enabled: metrics.enabled,
             server_name: server_name.to_string(),
+            access_log_enabled: logging.access_log,
         }
     }
 }
@@ -177,7 +182,48 @@ pub fn apply_middleware(
     app = app.layer(ConcurrencyLimitLayer::new(config.max_connections));
     info!("Max concurrent requests limit: {}", config.max_connections);
 
+    // Layer 10: Access logging (outermost — sees total request duration after all processing)
+    if config.access_log_enabled {
+        app = app.layer(axum_middleware::from_fn(access_log_middleware));
+        info!("Access logging enabled");
+    }
+
     app
+}
+
+/// Structured per-request access log middleware.
+///
+/// Emits one `INFO` tracing event per request with method, URI, status, duration,
+/// and client IP. The `target: "stratus::access"` field makes it easy to route or
+/// filter access logs independently from application logs.
+pub async fn access_log_middleware(
+    request: AxumRequest,
+    next: axum_middleware::Next,
+) -> axum::response::Response {
+    let method = request.method().to_string();
+    let uri = request.uri().to_string();
+    let client_ip = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip().to_string())
+        .unwrap_or_else(|| "-".to_string());
+
+    let start = std::time::Instant::now();
+    let response = next.run(request).await;
+    let duration_ms = start.elapsed().as_millis();
+    let status = response.status().as_u16();
+
+    tracing::info!(
+        target: "stratus::access",
+        method,
+        uri,
+        status,
+        duration_ms,
+        client_ip,
+        "request"
+    );
+
+    response
 }
 
 /// Apply compression middleware with configured algorithms and minimum size
@@ -448,6 +494,7 @@ mod tests {
             max_request_size: 100 * 1024 * 1024,
             metrics_enabled: false,
             server_name: "Test".to_string(),
+            access_log_enabled: false,
         }
     }
 
@@ -510,9 +557,15 @@ mod tests {
         let security = SecurityConfigBuilder::new().cors_enabled(true).build();
         let network = NetworkConfig::default();
         let metrics = MetricsConfig::default();
+        let logging = crate::config::LoggingConfig::default();
 
-        let mw_config =
-            MiddlewareConfig::from_app_config(&security, &network, &metrics, "TestServer/1.0");
+        let mw_config = MiddlewareConfig::from_app_config(
+            &security,
+            &network,
+            &metrics,
+            &logging,
+            "TestServer/1.0",
+        );
 
         assert!(mw_config.compression_enabled);
         assert!(mw_config.cors_enabled);

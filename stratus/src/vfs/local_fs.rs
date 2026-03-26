@@ -178,6 +178,18 @@ impl Vfs for LocalFs {
             .await
             .map_err(|e| map_io_err(e, path))
     }
+
+    async fn remove_file(&self, path: &Path) -> Result<(), VfsError> {
+        fs::remove_file(path)
+            .await
+            .map_err(|e| map_io_err(e, path))
+    }
+
+    async fn remove_dir_all(&self, path: &Path) -> Result<(), VfsError> {
+        fs::remove_dir_all(path)
+            .await
+            .map_err(|e| map_io_err(e, path))
+    }
 }
 
 #[cfg(test)]

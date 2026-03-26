@@ -143,6 +143,7 @@ async fn main() -> Result<()> {
         &security_config,
         &network_config,
         &metrics_config,
+        &logging_config,
         MetricsContext {
             handle: metrics_handle,
             use_separate_server: use_separate_metrics_server,
@@ -318,11 +319,13 @@ fn spawn_shutdown_handler(handle: Handle, connection_timeout: u64) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_app(
     server_name: &str,
     security_config: &config::SecurityConfig,
     network_config: &config::NetworkConfig,
     metrics_config: &config::MetricsConfig,
+    logging_config: &config::LoggingConfig,
     metrics_ctx: MetricsContext,
     shares: &HashMap<String, config::ShareConfig>,
     workdir: &Path,
@@ -353,9 +356,14 @@ fn build_app(
         Arc::new(AuthRateLimiter::new(limiter_config))
     };
 
-    // Create share router with state
+    // Create share router with state (read + write routes)
     let share_router = Router::new()
-        .route("/shares/{*path}", get(shares::serve_share))
+        .route(
+            "/shares/{*path}",
+            get(shares::serve_share::<vfs::backend::LocalFs>)
+                .put(shares::upload_file::<vfs::backend::LocalFs>)
+                .delete(shares::delete_share_item::<vfs::backend::LocalFs>),
+        )
         .with_state(share_state);
 
     // Build health state: paths of enabled shares to probe
@@ -405,20 +413,12 @@ fn build_app(
         }
     }
 
-    // TODO: Implement write operations (currently read-only)
-    // Authorization based on read_list, write_list, admin_list, deny_list is enforced
-    // per-request in serve_share() via shares::authz::check_permission().
-    // guest_ok is handled in shares::authz::check_permission().
-    // TODO: Implement max_connections per share
-    // TODO: Implement versioning if enabled
-    // TODO: Implement max_file_size enforcement on uploads
-    // TODO: Implement file_locking
-
     // Apply middleware stack using the middleware module
     let middleware_config = middleware::MiddlewareConfig::from_app_config(
         security_config,
         network_config,
         metrics_config,
+        logging_config,
         server_name,
     );
 
@@ -434,8 +434,6 @@ fn build_app(
         auth_provider_opt,
         Some(auth_rate_limiter),
     );
-
-    // TODO: Implement access logging if logging_config.access_log is enabled
 
     Ok(app)
 }

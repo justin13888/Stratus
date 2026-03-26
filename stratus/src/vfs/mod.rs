@@ -137,6 +137,12 @@ pub trait Vfs: Send + Sync + Clone + 'static {
     /// Used for reading cached HTML files.
     fn read_to_string(&self, path: &Path) -> impl Future<Output = Result<String, VfsError>> + Send;
 
+    /// Remove a single file
+    fn remove_file(&self, path: &Path) -> impl Future<Output = Result<(), VfsError>> + Send;
+
+    /// Remove a directory and all its contents recursively
+    fn remove_dir_all(&self, path: &Path) -> impl Future<Output = Result<(), VfsError>> + Send;
+
     /// Check if a path starts with another path (for security checks)
     ///
     /// This is used to ensure that canonicalized paths don't escape
