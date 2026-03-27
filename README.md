@@ -1,5 +1,7 @@
 # Stratus
 
+> Project Status: Early alpha. Things are being tested internally. If you have a use case that you want to validate against, feel free to open a *Discussion on GitHub*.
+
 Stratus converts your filesystem into your own cloud
 
 ## Motivation
