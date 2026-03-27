@@ -1,0 +1,21 @@
+pre-commit:
+  piped: true
+  commands:
+    fmt:
+      run: cargo fmt --all
+    lint:
+      run: cargo clippy --all-targets --fix --allow-dirty -- -D warnings
+    clippy:
+      run: cargo clippy --all-targets -- -D warnings
+    diff:
+      run: git diff --exit-code
+
+pre-push:
+  piped: true
+  commands:
+    fmt-check:
+      run: cargo fmt --all -- --check
+    clippy:
+      run: cargo clippy --all-targets -- -D warnings
+    test:
+      run: cargo test --all

@@ -41,6 +41,25 @@ This is a Rust workspace containing three crates:
 Prerequisites:
 
 - rustup
+- [just](https://github.com/casey/just) — task runner (`cargo install just`)
+- [lefthook](https://github.com/evilmartians/lefthook) — git hooks manager (see install options below)
+
+### Git Hooks
+
+```bash
+lefthook install
+```
+
+### Useful Commands
+
+```bash
+just pre-commit   # run pre-commit checks locally
+just pre-push     # run pre-push checks locally
+just fmt          # fix formatting
+just lint         # fix auto-fixable lint issues
+just clippy       # check for lint errors
+just test         # run tests
+```
 
 ### Generate Password Hashes
 
